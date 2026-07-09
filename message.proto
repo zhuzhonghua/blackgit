@@ -1,0 +1,21 @@
+package com.blackgit;
+
+message DListItem {
+  optional string sha = 1;
+  optional string name = 2;
+}
+
+message List {
+  optional bool forpush = 1;
+  repeated DListItem items = 2;
+}
+
+message DFetchItem {
+  optional string sha = 1;
+  optional string path = 2;
+}
+
+message Fetch {
+  repeated DFetchItem  shas = 1;
+  optional bytes pack = 2;
+}
