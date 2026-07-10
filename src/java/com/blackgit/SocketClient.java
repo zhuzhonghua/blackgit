@@ -22,6 +22,7 @@ public class SocketClient {
     private StringBuilder lineBuffer = new StringBuilder();
     private static final int MAX_BUFFER_SIZE = 65535;
     private LineProcesser processer = new LineProcesser(this);
+    private int readState = 1;
 
     public SocketClient(Selector sel, SocketChannel c, SocketAddress a) {
         selector = sel;
@@ -31,37 +32,47 @@ public class SocketClient {
         lenbuf = ByteBuffer.allocate(4);
     }
 
-    public boolean read() throws Exception {
-        if (bodybuf != null) {
-            int count = channel.read(bodybuf);
-            if (count < 0) {
-                throw new Exception("readbody error " + addr);
+    public boolean readHead() throws Exception {
+        int count = channel.read(lenbuf);
+        if (count < 0) {
+            throw new Exception("readlen error " + addr);
+        }
+        if (!lenbuf.hasRemaining()) {
+            lenbuf.flip();
+            int len = lenbuf.getInt();
+            if (len >= 65535 || len <= 0) {
+                throw new Exception("illegal len " + len +" addr "+ addr);
             }
+            readState = 2;
+            lenbuf.clear();
+            bodybuf = ByteBuffer.allocate(len);
+            Log.net.debug("to read {} bytes", len);
+        }
+        return count > 0;
+    }
 
-            if (!bodybuf.hasRemaining()) {
-                bodybuf.flip();
-                OPProcesser.process(this, bodybuf);
-                bodybuf = null;
-                //String recv = new String(bodybuf.array(), 0, bodybuf.limit(), StandardCharsets.UTF_8);
-                //processer.processLine(recv);
-            }
-            return count > 0;
-        } else {
-            int count = channel.read(lenbuf);
-            if (count < 0) {
-                throw new Exception("readlen error " + addr);
-            }
-            if (!lenbuf.hasRemaining()) {
-                lenbuf.flip();
-                int len = lenbuf.getInt();
-                if (len >= 65535 || len <= 0) {
-                    throw new Exception("illegal len " + len +" addr "+ addr);
-                }
-                lenbuf.clear();
-                bodybuf = ByteBuffer.allocate(len);
-                Log.net.debug("to read {} bytes", len);
-            }
-            return count > 0;
+    public boolean readBody() throws Exception {
+        int count = channel.read(bodybuf);
+        if (count < 0) {
+            throw new Exception("readbody error " + addr);
+        }
+
+        if (!bodybuf.hasRemaining()) {
+            readState = 1;
+            bodybuf.flip();
+            OPProcesser.process(this, bodybuf);
+            bodybuf = null;
+            //String recv = new String(bodybuf.array(), 0, bodybuf.limit(), StandardCharsets.UTF_8);
+            //processer.processLine(recv);
+        }
+        return count > 0;
+    }
+
+    public boolean read() throws Exception {
+        switch (readState) {
+            case 1: return readHead();
+            case 2: return readBody();
+            default: throw new Exception("internal err state="+readState);
         }
     }
 

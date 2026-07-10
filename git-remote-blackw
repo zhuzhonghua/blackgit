@@ -182,12 +182,12 @@ class ExternalBlackW:
 
   def run(self, argv):
     pout("external blackw run")
-    if argv[1] == "clone":
-      self.do_clone(argv)
+    if argv[1] == "init":
+      self.do_init(argv)
     else:
       raise Exception(f"unsupport operation {argv[1]}")
 
-  def do_clone(self, argv):
+  def do_init(self, argv):
     if len(argv) != 3:
       raise Exception("wrong args")
 

@@ -26,5 +26,5 @@
   :main com.blackgit.Main
   :omit-source true
   :repl-options {:init-ns blackgit.core}
-  :javac-options ["-target" "11" "-source" "11"]
+  :javac-options ["-target" "21" "-source" "21"]
   )
