@@ -195,7 +195,7 @@ class ExternalBlackW:
     if os.path.exists(path):
       raise Exception(f"{path} exists")
     os.mkdir(path)
-    self.run_cmd(['git', 'init', '.'], cwd=path)
+    self.run_cmd(['git', 'init', '--object-format=sha256', '.'], cwd=path)
     self.run_cmd(["git", "config", "core.repositoryformatversion", "1"], cwd=path)
     self.run_cmd(['git', 'config', 'core.fsmonitor', 'true'], cwd=path)
     self.run_cmd(['git', 'config', 'core.multipackindex', 'true'], cwd=path)
