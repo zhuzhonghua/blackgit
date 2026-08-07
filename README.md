@@ -1,5 +1,7 @@
 ## BlackGit
 
+[English](README.md) | [简体中文](README_ch.md)
+
 Inspired by **Perforce** and **Unreal Engine's Lore**, BlackGit bridges the gap between Git's distributed model and the centralized workflows teams need when dealing with large binaries, file locking, and fine-grained permissions — things Perforce is known for.
 
 The core idea: instead of forking Git or building a VCS from scratch, BlackGit is built on top of Git's **remote-helper** protocol with a custom backend server. You still use `git pull`, `git checkout` — but under the hood, a custom server controls what gets fetched, when, and by whom.
