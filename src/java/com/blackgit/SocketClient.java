@@ -1,6 +1,7 @@
 package com.blackgit;
 
-import com.google.protobuf.Message;
+import com.blackgit.protocol.Protocol;
+import com.blackgit.protocol.ProtocolRegistry;
 
 import java.io.IOException;
 import java.net.SocketAddress;
@@ -15,43 +16,89 @@ public class SocketClient {
 
     private Selector selector;
     private SocketChannel channel;
-    private ByteBuffer lenbuf;
+    private ByteBuffer headerbuf;
     private ByteBuffer bodybuf;
     private ConcurrentLinkedQueue<ByteBuffer> outq = new ConcurrentLinkedQueue<>();
     public SocketAddress addr;
-    private StringBuilder lineBuffer = new StringBuilder();
     private static final int MAX_BUFFER_SIZE = 65535;
-    private LineProcesser processer = new LineProcesser(this);
+
     private int readState = 1;
+    private String protocolName = null;
+    private int bodyLength = 0;
 
     public SocketClient(Selector sel, SocketChannel c, SocketAddress a) {
         selector = sel;
         channel = c;
         addr = a;
-
-        lenbuf = ByteBuffer.allocate(4);
+        headerbuf = ByteBuffer.allocate(256);
     }
 
-    public boolean readHead() throws Exception {
-        int count = channel.read(lenbuf);
-        if (count < 0) {
-            throw new Exception("readlen error " + addr);
+    public boolean read() throws Exception {
+        switch (readState) {
+            case 1: return readProtocolName();
+            case 2: return readBodyLength();
+            case 3: return readBody();
+            default: throw new Exception("internal err state=" + readState);
         }
-        if (!lenbuf.hasRemaining()) {
-            lenbuf.flip();
-            int len = lenbuf.getInt();
-            if (len >= 65535 || len <= 0) {
-                throw new Exception("illegal len " + len +" addr "+ addr);
+    }
+
+    private boolean readProtocolName() throws Exception {
+        int count = channel.read(headerbuf);
+        if (count < 0) {
+            throw new Exception("read protocol name error " + addr);
+        }
+        
+        int newlinePos = -1;
+        for (int i = 0; i < headerbuf.limit(); i++) {
+            if (headerbuf.get(i) == '\n') {
+                newlinePos = i;
+                break;
             }
+        }
+        
+        if (newlinePos >= 0) {
+            headerbuf.flip();
+            protocolName = new String(headerbuf.array(), 0, newlinePos+1).trim();
+            headerbuf.position(newlinePos+1);
+
+            Log.net.debug("Protocol: {}", protocolName);
+            
+            Protocol protocol = ProtocolRegistry.get(protocolName);
+            if (protocol == null) {
+                throw new Exception("Unknown protocol: " + protocolName);
+            }
+            
             readState = 2;
-            lenbuf.clear();
-            bodybuf = ByteBuffer.allocate(len);
-            Log.net.debug("to read {} bytes", len);
+            headerbuf.compact();
+        } else if (!headerbuf.hasRemaining()) {
+            throw new Exception("Protocol name too long");
         }
         return count > 0;
     }
 
-    public boolean readBody() throws Exception {
+    private boolean readBodyLength() throws Exception {
+        int count = channel.read(headerbuf);
+        if (count < 0) {
+            throw new Exception("read body length error " + addr);
+        }
+        if (headerbuf.remaining() >= 4) {
+            bodyLength = headerbuf.getInt();
+            if (bodyLength > MAX_BUFFER_SIZE || bodyLength < 0) {
+                throw new Exception("illegal body length " + bodyLength + " addr " + addr);
+            }
+            if (headerbuf.remaining() > bodyLength) {
+                throw new Exception("too much data, illegal body length " + bodyLength + " addr " + addr);
+            }
+            readState = 3;
+            bodybuf = ByteBuffer.allocate(bodyLength);
+            bodybuf.put(headerbuf);
+            headerbuf.clear();
+            return true;
+        }
+        return count > 0;
+    }
+
+    private boolean readBody() throws Exception {
         int count = channel.read(bodybuf);
         if (count < 0) {
             throw new Exception("readbody error " + addr);
@@ -60,24 +107,14 @@ public class SocketClient {
         if (!bodybuf.hasRemaining()) {
             readState = 1;
             bodybuf.flip();
-            OPProcesser.process(this, bodybuf);
+            Protocol protocol = ProtocolRegistry.get(protocolName);
+            if (protocol != null) {
+                protocol.handle(this, bodybuf);
+            }
             bodybuf = null;
-            //String recv = new String(bodybuf.array(), 0, bodybuf.limit(), StandardCharsets.UTF_8);
-            //processer.processLine(recv);
+            protocolName = null;
         }
         return count > 0;
-    }
-
-    public boolean read() throws Exception {
-        switch (readState) {
-            case 1: return readHead();
-            case 2: return readBody();
-            default: throw new Exception("internal err state="+readState);
-        }
-    }
-
-    public void write(Message message) throws IOException {
-        write(message.toByteArray());
     }
 
     public void write(String data) throws IOException {
@@ -92,10 +129,10 @@ public class SocketClient {
         outq.offer(buf.flip());
     }
 
-    public void handleWrite(SelectionKey key) throws IOException {
+    public void handleWrite() throws IOException {
         ByteBuffer by = outq.peek();
         while (by != null) {
-            int count = channel.write(by);
+            channel.write(by);
             if (by.hasRemaining())
                 break;
 
@@ -113,6 +150,6 @@ public class SocketClient {
             key.cancel();
         }
         channel.close();
-        lenbuf.clear();
+        headerbuf.clear();
     }
 }

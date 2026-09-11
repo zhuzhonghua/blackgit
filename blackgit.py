@@ -2,13 +2,10 @@ import subprocess
 import sys
 import os
 import socket
-from multiprocessing.connection import Listener
 import io
 import time
 from pathlib import Path
-import ipc
 import struct
-import atexit
 
 class Net:
   def __init__(self):
@@ -16,6 +13,9 @@ class Net:
     self.host = "127.0.0.1"
     self.port = 1666
     self.initnet()
+
+  def close(self):
+    self.sock.close()
 
   def initnet(self):
     timeout = 2
@@ -36,70 +36,21 @@ class Net:
     n -= len(data)
     while n > 0:
       packet = self.sock.recv(n)
+      if not packet:
+        raise ConnectionError("Connection closed")
       data += packet
       n -= len(packet)
 
     return data
 
-  def recv(self):
-    len = self.recv0(4)
-    len = struct.unpack('!I', len)[0]
-    body = self.recv0(len)
-    return body
+  def _send_all(self, data):
+    self.sock.sendall(data)
 
-  def send0(self, arr):
-    l = len(arr)
-    packet = io.BytesIO()
-    packet.write(struct.pack("!I", l))
-    packet.write(arr)
-    value = packet.getvalue()
-    self.sock.sendall(value)
+  def call(self, protocol, body=b''):
+    req = protocol.encode('utf-8') + b'\n' + struct.pack('!I', len(body)) + body
+    self._send_all(req)
 
-  def sendstr(self, s):
-    self.send0(s.encode('utf-8'))
-
-connid = 1
-class BlackGit:
-  def __init__(self):
-    self.net = Net()
-
-  def run(self):
-    global connid
-    with Listener(ipc.ADDRESS, authkey=ipc.AUTHKEY, family=ipc.FAMILY) as listener:
-      print("IPC Server is Listening")
-      while True:
-        with listener.accept() as conn:
-          self._run(conn)
-        connid = connid + 1
-
-  def _run(self, conn):
-    print(f"{connid} IPC New Client is comming")
-    try:
-      while True:
-        raw = conn.recv()
-        print(f"{connid} recv bytes len {len(raw)}")
-        self.net.send0(raw)
-        data = self.net.recv()
-        conn.send(data)
-
-    except EOFError:
-      print(f"{connid} IPC Connection closed by Client")
-
-def main():
-  try:
-    blackw = BlackGit()
-    blackw.run()
-  except Exception as e:
-    print(f"unexpected exception {e}")
-    raise e
-  except KeyboardInterrupt:
-    print("keyboardinterrupt exit")
-    sys.exit(1)
-
-def bye():
-  print("IPC Server exit")
-
-atexit.register(bye)
-
-if __name__ == "__main__":
-  sys.exit(main())
+    resp_len_data = self.recv0(4)
+    resp_len = struct.unpack('!I', resp_len_data)[0]
+    resp_body = self.recv0(resp_len) if resp_len > 0 else b''
+    return resp_body

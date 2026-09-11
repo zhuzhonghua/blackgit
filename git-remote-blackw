@@ -1,30 +1,25 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 import os
-import shlex
-import subprocess
 import sys
-from pathlib import Path
-from multiprocessing.connection import Client
-import ipc
-import queue
-import atexit
+import socket
+import struct
+import subprocess
+import tempfile
+import gitexternalblackw as gitblackw
+import blackgit
 
 type_map = {1: "commit", 2: "tree", 3: "blob", 4: "tag"}
 
 def pdebug(line):
-  perr(f"[R-DEBUG] {line}")
-
-def poutdebug(line):
-  pout(f"[E-DEBUG] {line}")
+  sys.stderr.write(f"[R-DEBUG] {line}\n")
+  sys.stderr.flush()
 
 def pout(line):
-  sys.stdout.write(line)
-  sys.stdout.write('\n')
+  sys.stdout.write(line + "\n")
   sys.stdout.flush()
 
 def perr(line):
-  sys.stderr.write(line)
-  sys.stderr.write('\n')
+  sys.stderr.write(line + "\n")
   sys.stderr.flush()
 
 def getline():
@@ -32,17 +27,16 @@ def getline():
 
 class RemoteBlackW:
   def __init__(self):
-    self.ipcconn = None
+    self.net = blackgit.Net()
 
   def run(self):
     try:
-      with Client(ipc.ADDRESS, authkey=ipc.AUTHKEY, family=ipc.FAMILY) as conn:
-        self.ipcconn = conn
         self._run()
-    except OSError as e:
-      info = f"IPC error {e}"
-      perr(info)
-      raise ConnectionError(info)
+    except Exception as e:
+      perr(f"Error: {e}")
+      raise
+    finally:
+      self.net.close()
 
   def _run(self):
     while True:
@@ -82,31 +76,10 @@ class RemoteBlackW:
       self.write("unsupported\n")
 
   def get_list(self, line):
-    clist = ipc.cget_list('for-push' in line)
-    self.ipcconn.send(clist)
-    data = self.ipcconn.recv()
-    slist = ipc.sget_list(data)
-    pdebug(f"[server] {slist}")
-    for shana in slist:
-      self.write(f"{shana[0]} {shana[1]}\n")
+    resp = self.net.call('list')
+    sha_name = resp.decode('utf-8')
+    self.write(f"{sha_name}")
     self.write('\n')
-
-  def writetotmp(self, pack):
-    import tempfile
-    tmp = tempfile.NamedTemporaryFile(suffix='.pack', delete=False)
-    tmp.write(pack)
-    tmp.close()
-    try:
-      self.run_cmd(["git", "index-pack", "--promisor", tmp.name])
-    finally:
-      os.unlink(tmp.name)
-
-  def write_obj_raw(self, sha, type, data):
-    t = type_map.get(type)
-    cmd = ["git", "hash-object", "-w", "-t", t, "--stdin"]
-    _sha = self._writedata(cmd, data)
-    if sha != _sha:
-      raise Exception(f"sha not equal {sha} {_sha}")
 
   def _parse_fetch(self, line):
     ftargv = line.split(" ")
@@ -121,118 +94,56 @@ class RemoteBlackW:
   def get_fetch(self, line):
     while True:
       sha, ref = self._parse_fetch(line)
-      cfetch = ipc.cget_fetch([sha])
-      self.ipcconn.send(cfetch)
-      data = self.ipcconn.recv()
-      sfetch = ipc.sget_fetch(data)
-      self._writedata(["git", "index-pack", "--stdin", "--promisor"], sfetch.pack)
+      pdebug(f"Fetching {sha} for {ref}")
+      body = self._encode_fetch_request([sha])
+      pack = self.net.call('fetch', body)
+      self._write_pack(pack)
+
       pdebug(f"{line} end")
       line = getline()
       if line == "":
         break
     self.write("\n")
-    pdebug(f"[git] fetch end")
+    pdebug("[git] fetch end")
 
-  def writebytes(self, pack):
-    sys.stdout.buffer.write(pack)
-    sys.stdout.flush()
+  def _encode_fetch_request(self, shas):
+    text = "\n".join(shas)
+    return text.encode('utf-8')
+
+  def _write_pack(self, pack):
+    tmp = tempfile.NamedTemporaryFile(suffix='.pack', delete=False)
+    try:
+      tmp.write(pack)
+      tmp.close()
+      self.run_cmd(["git", "index-pack", "--stdin", "--promisor"], stdin=pack)
+    finally:
+      os.unlink(tmp.name)
+
+  def run_cmd(self, cmd, *arg, stdin=None, **args):
+    pdebug(f"run={cmd}")
+    with subprocess.Popen(cmd,
+                          stdout=subprocess.PIPE,
+                          stderr=subprocess.PIPE,
+                          stdin=subprocess.PIPE if stdin else None,
+                          *arg, **args) as p:
+      out, err = p.communicate(stdin)
+      if out:
+        pdebug(out.decode().strip())
+      if err:
+        pdebug(err.decode().strip())
+      if p.returncode != 0:
+        raise Exception(err.decode().strip())
+      return out.decode().strip() if out else ""
 
   def write(self, message):
     sys.stdout.write(message)
     sys.stdout.flush()
 
-  def run_cmd(self, cmd, *arg, **args):
-    poutdebug(f"{cmd}")
-    with subprocess.Popen(cmd,
-                          stdout=subprocess.PIPE,
-                          stderr=subprocess.PIPE,
-                          stdin=subprocess.PIPE,
-                          text=True,
-                          *arg, **args) as p:
-      out, err = p.communicate()
-      if out:
-        pdebug(out)
-      if err:
-        pdebug(err)
-      if p.returncode != 0:
-        raise Exception(err)
-      return out
-
-  def _writedata(self, cmd, contents, *arg, **args):
-    pdebug(f"run={cmd}")
-    with subprocess.Popen(cmd,
-                          stdout=subprocess.PIPE,
-                          stderr=subprocess.PIPE,
-                          stdin=subprocess.PIPE,
-                          *arg, **args) as p:
-      out, err = p.communicate(contents)
-      if out:
-        out = out.decode("utf8").strip()
-        pdebug(f"out={out}")
-      if err:
-        err = err.decode("utf8").strip()
-        pdebug(f"err={err}")
-      if p.returncode != 0:
-        raise Exception(err)
-      return out
-
-class ExternalBlackW:
-  def __init__(self):
-    pass
-
-  def run(self, argv):
-    pout("external blackw run")
-    if argv[1] == "init":
-      self.do_init(argv)
-    else:
-      raise Exception(f"unsupport operation {argv[1]}")
-
-  def do_init(self, argv):
-    if len(argv) != 3:
-      raise Exception("wrong args")
-
-    path = argv[2]
-    if os.path.exists(path):
-      raise Exception(f"{path} exists")
-    os.mkdir(path)
-    self.run_cmd(['git', 'init', '.'], cwd=path)
-    self.run_cmd(["git", "config", "core.repositoryformatversion", "1"], cwd=path)
-    self.run_cmd(['git', 'config', 'core.fsmonitor', 'true'], cwd=path)
-    self.run_cmd(['git', 'config', 'core.multipackindex', 'true'], cwd=path)
-    self.run_cmd(['git', 'config', 'core.commitgraph', 'true'], cwd=path)
-    self.run_cmd(['git', 'config', 'core.sparsecheckout', 'true'], cwd=path)
-    self.run_cmd(["git", "config", "extensions.partialclone", "origin"], cwd=path)
-    self.run_cmd(["git", "config", "protocol.blackw.allow", "always"], cwd=path)
-    self.run_cmd(['git', 'config', 'fetch.writecommitgraph', 'true'], cwd=path)
-    self.run_cmd(['git', 'remote', 'add', 'origin', f"blackw::{path}"], cwd=path)
-    self.run_cmd(['git', 'config', 'remote.origin.promisor', 'true'], cwd=path)
-    self.run_cmd(['git', 'config', 'remote.origin.partialclonefilter', 'combine:blob:none+tree:0'], cwd=path)
-    #self.run_cmd(['git', 'config', 'remote.origin.url', f"blackw::{path}"], cwd=path)
-    #self.run_cmd(['git', 'remote', 'set-url', 'origin', f"blackw::{path}"], cwd=path)
-    self.run_cmd(['git', 'sparse-checkout', 'init', '--cone'], cwd=path)
-    self.run_cmd(['git', 'commit-graph', 'write', '--reachable', '--changed-paths'], cwd=path)
-
-  def run_cmd(self, cmd, *arg, **args):
-    poutdebug(f"{cmd}")
-    with subprocess.Popen(cmd,
-                          stdout=subprocess.PIPE,
-                          stderr=subprocess.PIPE,
-                          stdin=subprocess.PIPE,
-                          text=True,
-                          *arg, **args) as p:
-      out, err = p.communicate()
-      if out:
-        poutdebug(out)
-      if err:
-        poutdebug(err)
-      if p.returncode != 0:
-        raise Exception(err)
-
 def main():
   try:
     pdebug(f"argv={sys.argv}")
     if sys.argv[0].endswith("git-blackw"):
-      blackw = ExternalBlackW()
+      blackw = gitblackw.ExternalBlackW()
       blackw.run(sys.argv)
     else:
       blackw = RemoteBlackW()
@@ -240,14 +151,9 @@ def main():
     return 0
   except Exception as e:
     perr(f"unexpected exception {e}")
-    raise e
+    raise
   except KeyboardInterrupt:
     sys.exit(1)
-
-def bye():
-  pass
-
-atexit.register(bye)
 
 if __name__ == "__main__":
   sys.exit(main())

@@ -55,7 +55,7 @@ public class Server {
                             while (client.read());
                         }
                         if (key.isWritable()) {
-                            client.handleWrite(key);
+                            client.handleWrite();
                         }
                     } catch (Exception e) {
                         Log.logger.info("select read write error {}", client.addr);
