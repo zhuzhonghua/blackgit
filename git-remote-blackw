@@ -14,10 +14,6 @@ def pdebug(line):
   sys.stderr.write(f"[R-DEBUG] {line}\n")
   sys.stderr.flush()
 
-def pout(line):
-  sys.stdout.write(line + "\n")
-  sys.stdout.flush()
-
 def perr(line):
   sys.stderr.write(line + "\n")
   sys.stderr.flush()
