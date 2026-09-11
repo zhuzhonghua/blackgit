@@ -1,7 +1,7 @@
 import os
 import subprocess
 
-def pout(self, line):
+def pout(line):
   sys.stdout.write(line)
   if not line.endswith('\n'):
     sys.stdout.write('\n')
