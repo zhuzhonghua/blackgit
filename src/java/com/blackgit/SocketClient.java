@@ -6,6 +6,7 @@ import com.blackgit.protocol.ProtocolRegistry;
 import java.io.IOException;
 import java.net.SocketAddress;
 import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
 import java.nio.channels.SelectionKey;
 import java.nio.channels.Selector;
 import java.nio.channels.SocketChannel;
@@ -30,7 +31,7 @@ public class SocketClient {
         selector = sel;
         channel = c;
         addr = a;
-        headerbuf = ByteBuffer.allocate(256);
+        headerbuf = ByteBuffer.allocate(256).order(ByteOrder.BIG_ENDIAN);
     }
 
     public boolean read() throws Exception {
@@ -49,7 +50,7 @@ public class SocketClient {
         }
         
         int newlinePos = -1;
-        for (int i = 0; i < headerbuf.limit(); i++) {
+        for (int i = 0; i < headerbuf.position(); i++) {
             if (headerbuf.get(i) == '\n') {
                 newlinePos = i;
                 break;
@@ -81,7 +82,8 @@ public class SocketClient {
         if (count < 0) {
             throw new Exception("read body length error " + addr);
         }
-        if (headerbuf.remaining() >= 4) {
+        if (headerbuf.position() >= 4) {
+            headerbuf.flip();
             bodyLength = headerbuf.getInt();
             if (bodyLength > MAX_BUFFER_SIZE || bodyLength < 0) {
                 throw new Exception("illegal body length " + bodyLength + " addr " + addr);
@@ -123,7 +125,7 @@ public class SocketClient {
 
     public void write(byte[] arr) throws IOException {
         channel.register(selector, SelectionKey.OP_WRITE | SelectionKey.OP_READ, this);
-        ByteBuffer buf = ByteBuffer.allocate(arr.length+4);
+        ByteBuffer buf = ByteBuffer.allocate(arr.length + 4).order(ByteOrder.BIG_ENDIAN);
         buf.putInt(arr.length);
         buf.put(arr);
         outq.offer(buf.flip());
