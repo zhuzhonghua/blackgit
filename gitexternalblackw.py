@@ -64,7 +64,7 @@ class InitCommand:
     run(['git', 'config', 'fetch.writecommitgraph', 'true'], cwd=path)
     run(['git', 'config', 'remote.origin.promisor', 'true'], cwd=path)
     run(['git', 'config', 'remote.origin.partialclonefilter', 'combine:blob:none+tree:0'], cwd=path)
-    run(['git', 'sparse-checkout', 'init', '--cone'], cwd=path)
+    run(['git', 'sparse-checkout', 'init', '--cone', '--sparse-index'], cwd=path)
     run(['git', 'commit-graph', 'write', '--reachable', '--changed-paths'], cwd=path)
 
   def applyconfig(self, path):
@@ -91,13 +91,11 @@ class InitCommand:
   def inithead(self, path):
     branch = self.remotedefaultbranch(path)
     run = self.blackw.run_cmd
-    #sha = self.blackw.git_output(["git", "rev-parse", f"refs/remotes/origin/{branch}"],
-    #                             cwd=path).strip()
-    #run(["git", "branch", branch, sha], cwd=path)
     run(["git", "update-ref", f"refs/heads/{branch}", "FETCH_HEAD"], cwd=path)
     run(["git", "symbolic-ref", "HEAD", f"refs/heads/{branch}"], cwd=path)
     run(["git", "config", f"branch.{branch}.remote", "origin"], cwd=path)
     run(["git", "config", f"branch.{branch}.merge", f"refs/heads/{branch}"], cwd=path)
+    self.blackw.sparsify_all(path)
 
 class LsCommand:
   def __init__(self, blackw):
@@ -141,6 +139,8 @@ class SyncFileCommand:
     bw.ensurepresent(sha)
     bw.run_cmd(["git", "update-index", "--add", "--cacheinfo",
                 f"{mode},{sha},{rel}"], cwd=toplevel)
+    bw.run_cmd(["git", "update-index", "--no-skip-worktree", "--", rel],
+               cwd=toplevel)
     bw.run_cmd(["git", "checkout-index", "-f", "--", rel], cwd=toplevel)
     pout(f"released {rel} {sha}")
     return True
@@ -191,9 +191,12 @@ class FollowCommand:
   def remove_sparse(self, rel):
     bw = self.blackw
     toplevel = bw._top()
+    dirty = bw.git_output(["git", "status", "--porcelain", "--", rel],
+                          cwd=toplevel).strip()
+    if dirty:
+      raise Exception(f"follow: {rel} has local changes, commit/stash first:\n{dirty}")
     sparse = bw.getsparselist()
-    rest = sorted(e for e in sparse
-                  if e != rel and not e.startswith(rel.rstrip("/") + "/"))
+    rest = sorted(e for e in sparse if e != rel and not e.startswith(rel.rstrip("/") + "/"))
     if bw.iscovered(rel, rest, []):
       pout(f"follow: {rel} still covered by sparse {rest} "
            f"(cone mode cannot exclude sub-paths), nothing to do")
@@ -326,6 +329,16 @@ class ExternalBlackW:
     if out:
       pout(out)
     return out
+
+  def sparsify_all(self, toplevel):
+    self.run_cmd(["git", "read-tree", "HEAD"], cwd=toplevel)
+    out = self.git_output(["git", "ls-files", "-z"], cwd=toplevel)
+    files = [f for f in out.split("\x00") if f]
+    if not files:
+      return
+    self.run_cmd(["git", "update-index", "--skip-worktree", "--"] + files,
+                 cwd=toplevel)
+    pout("sparsified all (empty worktree, skip-worktree, status clean)")
 
   def normalizerel(self, p):
     if p in (".", "./", ""):
