@@ -59,6 +59,7 @@ class InitCommand:
     run(['git', 'config', 'core.multipackindex', 'true'], cwd=path)
     run(['git', 'config', 'core.commitgraph', 'true'], cwd=path)
     run(['git', 'config', 'core.sparsecheckout', 'true'], cwd=path)
+    run(['git', 'config', 'sparse.expectFilesOutsideOfPatterns', 'true'], cwd=path)
     run(["git", "config", "extensions.partialclone", "origin"], cwd=path)
     run(["git", "config", "protocol.blackw.allow", "always"], cwd=path)
     run(['git', 'config', 'fetch.writecommitgraph', 'true'], cwd=path)
