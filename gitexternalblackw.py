@@ -145,6 +145,90 @@ class SyncFileCommand:
     pout(f"released {rel} {sha}")
     return True
 
+class FollowCommand:
+  def __init__(self, blackw):
+    self.blackw = blackw
+    self.usage = "usage: git blackw follow [-d] <dir>"
+
+  def run(self, argv):
+    path, delete = self.parseargs(argv)
+    bw = self.blackw
+    toplevel = bw._top()
+    rel = bw.normalizerel(path)
+    if rel == ".":
+      raise Exception(f"no root\n{self.usage}")
+    head = bw.git_output(["git", "rev-parse", "HEAD"], cwd=toplevel).strip()
+    pout(f"follow HEAD={head} toplevel={toplevel} path={rel} delete={delete}")
+    if bw.type(rel) != "tree":
+      raise Exception(f"not a dir {rel}\n{self.usage}")
+    if delete:
+      self.remove_sparse(rel)
+      return
+    if not bw._allowed(rel):
+      pout("follow: path filtered, nothing to do")
+      return
+    self.ensure_sparse([rel])
+
+  def parseargs(self, argv):
+    args = argv[2:]
+    delete = False
+    path = None
+    for a in args:
+      if a == "-d":
+        delete = True
+      elif a in ("-h", "--help"):
+        raise Exception(f"{self.usage}")
+      elif a.startswith("-"):
+        raise Exception(f"unknown option {a}\n{self.usage}")
+      else:
+        if path is not None:
+          raise Exception(f"{self.usage}")
+        path = a
+    if not path:
+      raise Exception(f"{self.usage}")
+    return path, delete
+
+  def remove_sparse(self, rel):
+    bw = self.blackw
+    toplevel = bw._top()
+    sparse = bw.getsparselist()
+    rest = sorted(e for e in sparse
+                  if e != rel and not e.startswith(rel.rstrip("/") + "/"))
+    if bw.iscovered(rel, rest, []):
+      pout(f"follow: {rel} still covered by sparse {rest} "
+           f"(cone mode cannot exclude sub-paths), nothing to do")
+      return
+    if rest == sorted(sparse):
+      pout(f"follow: {rel} not in sparse, nothing to do")
+      return
+    if not rest:
+      raise Exception("follow: cannot remove the last sparse entry "
+                      "(cone-mode 'set' requires >=1 path); "
+                      "use 'git sparse-checkout disable' for a full checkout")
+    pout(f"sparse-checkout set {rest}")
+    bw.run_cmd(["git", "sparse-checkout", "set"] + rest, cwd=toplevel)
+
+  def ensure_sparse(self, rel_paths):
+    bw = self.blackw
+    toplevel = bw._top()
+    sparse = bw.getsparselist()
+    to_add = []
+    for rel in rel_paths:
+      if bw.iscovered(rel, sparse, to_add):
+        continue
+      to_add.append(rel)
+    uniq = []
+    for d in to_add:
+      if d not in uniq and not any(d != x and (d == x or d.startswith(x.rstrip("/") + "/"))
+                                   for x in to_add):
+        uniq.append(d)
+    to_add = sorted(uniq)
+    if to_add:
+      pout(f"sparse-checkout add {to_add}")
+      bw.run_cmd(["git", "sparse-checkout", "add"] + to_add, cwd=toplevel)
+    else:
+      pout(f"follow: {rel_paths} already covered by sparse, nothing to do")
+
 class SyncDirCommand:
   def __init__(self, blackw):
     self.blackw = blackw
@@ -162,32 +246,39 @@ class SyncDirCommand:
     pout(f"syncdir HEAD={head} toplevel={toplevel} path={rel}")
     if bw.type(rel) != "tree":
       raise Exception(f"not a dir {rel}\n{self.usage}")
-    self.checkoutpaths([rel])
+    self.checkout_shallow(rel)
 
-  def checkoutpaths(self, rel_paths):
+  def checkout_shallow(self, rel):
     bw = self.blackw
     toplevel = bw._top()
-    rel_paths = [r for r in rel_paths if bw._allowed(r)]
-    if not rel_paths:
-      pout("syncdir: all paths filtered, nothing to do")
+    if not bw._allowed(rel):
+      pout("syncdir: path filtered, nothing to do")
       return
-    sparse = bw.getsparselist()
-    to_add = []
-    for rel in rel_paths:
-      if bw.iscovered(rel, sparse, to_add):
+    out = bw.git_output(["git", "ls-tree", "-z", f"HEAD:{rel}"], cwd=toplevel)
+    entries = [e for e in out.split("\0") if e]
+    if not entries:
+      pout(f"syncdir: {rel} is empty, nothing to do")
+      return
+    syncfile = SyncFileCommand(bw)
+    done, skipped, subdirs = 0, 0, 0
+    for e in entries:
+      meta, _, name = e.partition("\t")
+      if not name:
         continue
-      to_add.append(rel)
-    uniq = []
-    for d in to_add:
-      if d not in uniq and not any(d != x and (d == x or d.startswith(x.rstrip("/") + "/"))
-                                   for x in to_add):
-        uniq.append(d)
-    to_add = sorted(uniq)
-    if to_add:
-      pout(f"sparse-checkout add {to_add}")
-      bw.run_cmd(["git", "sparse-checkout", "add"] + to_add, cwd=toplevel)
-    for rel in sorted(set(rel_paths)):
-      bw.run_cmd(["git", "checkout", "HEAD", "--", rel], cwd=toplevel)
+      mode, otype, sha = meta.split()
+      child = f"{rel}/{name}"
+      if otype == "blob":
+        if syncfile.release_by_hash(sha, child, mode):
+          done += 1
+        else:
+          skipped += 1
+      elif otype in ("tree", "commit"):
+        pout(f"skip subdir {child} (non-recursive)")
+        subdirs += 1
+      else:
+        pout(f"skip {child} (unknown type {otype})")
+        skipped += 1
+    pout(f"syncdir done: released={done} filtered={skipped} skipped_subdirs={subdirs}")
 
 class ExternalBlackW:
   def __init__(self, checkout_filter=None):
@@ -204,6 +295,8 @@ class ExternalBlackW:
       SyncFileCommand(self).run(argv)
     elif argv[1] == "syncdir":
       SyncDirCommand(self).run(argv)
+    elif argv[1] == "follow":
+      FollowCommand(self).run(argv)
     elif argv[1] == "ls":
       LsCommand(self).run(argv)
     else:
