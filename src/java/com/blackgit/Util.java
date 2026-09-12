@@ -5,6 +5,9 @@ import clojure.lang.Compiler.CompilerException;
 import clojure.lang.RT;
 import clojure.lang.Var;
 
+import java.nio.ByteBuffer;
+import java.nio.charset.StandardCharsets;
+
 public class Util {
     public static String fromClj() {
         return "From Java";
@@ -50,5 +53,9 @@ public class Util {
         //Log.clj.debug("call {} {} {}", ns, func, params);
         Var call = RT.var(ns, func);
         call.applyTo(RT.seq(params));
+    }
+
+    public static String tostr(ByteBuffer data) {
+        return StandardCharsets.UTF_8.decode(data).toString();
     }
 }

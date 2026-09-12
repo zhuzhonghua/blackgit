@@ -10,16 +10,109 @@ import blackgit
 
 type_map = {1: "commit", 2: "tree", 3: "blob", 4: "tag"}
 
-def pdebug(line):
-  sys.stderr.write(f"[R-DEBUG] {line}\n")
-  sys.stderr.flush()
-
 def perr(line):
-  sys.stderr.write(line + "\n")
+  sys.stderr.write(line)
+  if not line.endswith('\n'):
+    sys.stderr.write('\n')
   sys.stderr.flush()
 
 def getline():
   return sys.stdin.readline().strip()
+
+class CapabilitiesCommand:
+  def __init__(self, blackw):
+    self.blackw = blackw
+
+  def run(self):
+    bw = self.blackw
+    bw.write("fetch\n")
+    bw.write("filter\n")
+    bw.write("push\n")
+    bw.write("list\n")
+    bw.write("option\n")
+    bw.write("\n")
+
+class ListCommand:
+  def __init__(self, blackw):
+    self.blackw = blackw
+
+  def run(self, line):
+    resp = self.blackw.net.call('list')
+    symrefs = []
+    refs = []
+    for l in resp.decode('utf-8').splitlines():
+      l = l.strip()
+      if not l:
+        continue
+      (symrefs if l.startswith('@') else refs).append(l)
+    if symrefs:
+      perr(f"remote HEAD symrefs: {symrefs}")
+    for l in symrefs + refs:
+      self.blackw.write(l + '\n')
+    self.blackw.write('\n')
+
+class FetchCommand:
+  def __init__(self, blackw):
+    self.blackw = blackw
+
+  def run(self, line):
+    while True:
+      sha, ref = self.parsefetch(line)
+      perr(f"Fetching {sha} for {ref}")
+      body = self.encodefetchrequest([sha])
+      pack = self.blackw.net.call('fetch', body)
+      self._write_pack(pack)
+
+      perr(f"{line} end")
+      line = getline()
+      if line == "":
+        break
+    self.blackw.write("\n")
+    perr("[git] fetch end")
+
+  def parsefetch(self, line):
+    ftargv = line.split(" ")
+    if ftargv[1].startswith("--filter="):
+      sha = ftargv[2]
+      ref = ftargv[3]
+    else:
+      sha = ftargv[1]
+      ref = ftargv[2]
+    return (sha, ref)
+
+  def encodefetchrequest(self, shas):
+    text = "\n".join(shas)
+    return text.encode('utf-8')
+
+  def _write_pack(self, pack):
+    tmp = tempfile.NamedTemporaryFile(suffix='.pack', delete=False)
+    try:
+      tmp.write(pack)
+      tmp.close()
+      self.blackw.run_cmd(["git", "index-pack", "--stdin", "--promisor"], stdin=pack)
+    finally:
+      os.unlink(tmp.name)
+
+class OptionCommand:
+  def __init__(self, blackw):
+    self.blackw = blackw
+
+  def run(self, line):
+    bw = self.blackw
+    if line.startswith("option verbosity"):
+      bw.write("ok\n")
+    elif line.startswith("option filter"):
+      bw.write("ok\n")
+    elif line.startswith("option from-promisor"):
+      bw.write("ok\n")
+    elif line.startswith("option progress"):
+      bw.write("ok\n")
+    elif line.startswith("option check-connectivity"):
+      bw.write("unsupported\n")
+    elif line.startswith("option update-shallow"):
+      bw.write("ok\n")
+    else:
+      bw.write("unsupported\n")
 
 class RemoteBlackW:
   def __init__(self):
@@ -27,7 +120,7 @@ class RemoteBlackW:
 
   def run(self):
     try:
-        self._run()
+      self._run()
     except Exception as e:
       perr(f"Error: {e}")
       raise
@@ -39,84 +132,21 @@ class RemoteBlackW:
       line = getline()
       if line == "":
         break
-      pdebug(f"[git] {line}")
+      perr(f"[git] {line}")
       if line == "capabilities":
-        self.write("fetch\n")
-        self.write("filter\n")
-        self.write("push\n")
-        self.write("list\n")
-        self.write("option\n")
-        self.write("\n")
+        CapabilitiesCommand(self).run()
       elif line.startswith("list"):
-        self.get_list(line)
+        ListCommand(self).run(line)
       elif line.startswith("fetch"):
-        self.get_fetch(line)
+        FetchCommand(self).run(line)
       elif line.startswith("option"):
-        self.do_option(line)
+        OptionCommand(self).run(line)
       else:
-        perr(f"[git]unsupported operation: {line}")
+        perr(f"[git] unsupported operation: {line}")
         sys.exit(1)
 
-  def do_option(self, line):
-    if line.startswith("option verbosity"):
-      self.write("ok\n")
-    elif line.startswith("option filter"):
-      self.write("ok\n")
-    elif line.startswith("option from-promisor"):
-      self.write("ok\n")
-    elif line.startswith("option progress"):
-      self.write("ok\n")
-    elif line.startswith("option check-connectivity"):
-      self.write("unsupported\n")
-    else:
-      self.write("unsupported\n")
-
-  def get_list(self, line):
-    resp = self.net.call('list')
-    sha_name = resp.decode('utf-8')
-    self.write(f"{sha_name}")
-    self.write('\n')
-
-  def _parse_fetch(self, line):
-    ftargv = line.split(" ")
-    if ftargv[1].startswith("--filter="):
-      sha = ftargv[2]
-      ref = ftargv[3]
-    else:
-      sha = ftargv[1]
-      ref = ftargv[2]
-    return (sha, ref)
-
-  def get_fetch(self, line):
-    while True:
-      sha, ref = self._parse_fetch(line)
-      pdebug(f"Fetching {sha} for {ref}")
-      body = self._encode_fetch_request([sha])
-      pack = self.net.call('fetch', body)
-      self._write_pack(pack)
-
-      pdebug(f"{line} end")
-      line = getline()
-      if line == "":
-        break
-    self.write("\n")
-    pdebug("[git] fetch end")
-
-  def _encode_fetch_request(self, shas):
-    text = "\n".join(shas)
-    return text.encode('utf-8')
-
-  def _write_pack(self, pack):
-    tmp = tempfile.NamedTemporaryFile(suffix='.pack', delete=False)
-    try:
-      tmp.write(pack)
-      tmp.close()
-      self.run_cmd(["git", "index-pack", "--stdin", "--promisor"], stdin=pack)
-    finally:
-      os.unlink(tmp.name)
-
   def run_cmd(self, cmd, *arg, stdin=None, **args):
-    pdebug(f"run={cmd}")
+    perr(f"run={cmd}")
     with subprocess.Popen(cmd,
                           stdout=subprocess.PIPE,
                           stderr=subprocess.PIPE,
@@ -124,9 +154,9 @@ class RemoteBlackW:
                           *arg, **args) as p:
       out, err = p.communicate(stdin)
       if out:
-        pdebug(out.decode().strip())
+        perr(out.decode().strip())
       if err:
-        pdebug(err.decode().strip())
+        perr(err.decode().strip())
       if p.returncode != 0:
         raise Exception(err.decode().strip())
       return out.decode().strip() if out else ""
@@ -137,7 +167,7 @@ class RemoteBlackW:
 
 def main():
   try:
-    pdebug(f"argv={sys.argv}")
+    perr(f"argv={sys.argv}")
     if sys.argv[0].endswith("git-blackw"):
       blackw = gitblackw.ExternalBlackW()
       blackw.run(sys.argv)

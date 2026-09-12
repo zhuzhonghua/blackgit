@@ -20,7 +20,7 @@
                  ]
   :jvm-opts ["-Dclojure.tools.logging.factory=clojure.tools.logging.impl/log4j2-factory"]
   :java-source-paths ["src/java"]
-  :resource-paths ["script"]
+  :resource-paths ["script" "resources"]
   :source-paths ["script"]
   :uberjar-exclusions [#"(?:^|/)script/"]
   :main com.blackgit.Main
