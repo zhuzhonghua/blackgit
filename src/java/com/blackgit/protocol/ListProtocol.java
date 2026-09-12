@@ -27,7 +27,7 @@ public class ListProtocol implements Protocol {
     public void handle(SocketClient client, ByteBuffer data) throws Exception {
         Log.logger.debug("list request from {}", client.addr);
         Map<String, String> nameId = new TreeMap<>(getList(BlackGit.bg.repository));
-        String headTarget = getHeadTarget(BlackGit.bg.repository, nameId);
+        String headTarget = getHeadTarget(nameId);
         Log.logger.debug("list reply {} refs from repo {}, HEAD -> {}",
                 nameId.size(), BlackGit.bg.repoPath, headTarget);
         for (Map.Entry<String, String> entry : nameId.entrySet()) {
@@ -79,11 +79,11 @@ public class ListProtocol implements Protocol {
         return branchCommitMap;
     }
 
-    public String getHeadTarget(Repository repository, Map<String, String> nameId) throws Exception {
-        String full = repository.getFullBranch();
-        if (full != null && full.startsWith("refs/heads/") && nameId.containsKey(full)) {
+    public String getHeadTarget(Map<String, String> nameId) throws Exception {
+        String full = BlackGit.bg.getHeadTarget();
+        if (nameId.containsKey(full)) {
             return full;
         }
-        throw new Exception("no head in "+BlackGit.bg.repoPath);
+        throw new Exception("no head in "+full+" "+BlackGit.bg.repoPath);
     }
 }

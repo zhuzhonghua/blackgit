@@ -18,6 +18,7 @@ class InitCommand:
   def __init__(self, blackw):
     self.blackw = blackw
     self.usage = "usage: git blackw init <path> [--force]"
+    self.origin = f"blackw::x.x.x.x:xxxx"
 
   def run(self, argv):
     path, force = self.parseargs(argv)
@@ -69,14 +70,14 @@ class InitCommand:
     run(['git', 'commit-graph', 'write', '--reachable', '--changed-paths'], cwd=path)
 
   def applyconfig(self, path):
-    self.blackw.run_cmd(['git', 'remote', 'set-url', 'origin', f"blackw::x.x.x.x:port"], cwd=path)
+    self.blackw.run_cmd(['git', 'remote', 'set-url', 'origin', f"{self.origin}"], cwd=path)
     self.applyconfig0(path)
     pout(f"refreshed configs in {path} (repo untouched: no fetch, no HEAD change)")
 
   def initrepo(self, path):
     run = self.blackw.run_cmd
     run(['git', 'init', '.'], cwd=path)
-    run(['git', 'remote', 'add', 'origin', f"blackw::{path}"], cwd=path)
+    run(['git', 'remote', 'add', 'origin', f"{self.origin}"], cwd=path)
     self.applyconfig0(path)
     run(['git', 'fetch', '--depth=1', '--update-shallow', 'origin'], cwd=path)
     self.inithead(path)
