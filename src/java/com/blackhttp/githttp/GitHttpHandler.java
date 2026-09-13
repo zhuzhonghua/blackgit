@@ -1,8 +1,8 @@
-package com.smarthttp.githttp;
+package com.blackhttp.githttp;
 
 import com.black.Log;
-import com.smarthttp.Config;
-import com.smarthttp.SpooledBuffer;
+import com.blackhttp.Config;
+import com.blackhttp.SpooledBuffer;
 import io.netty.buffer.ByteBuf;
 import io.netty.channel.ChannelFuture;
 import io.netty.channel.ChannelFutureListener;

@@ -1,4 +1,4 @@
-package com.smarthttp.blackgit;
+package com.blackhttp.blackgit;
 
 import io.netty.buffer.ByteBuf;
 import io.netty.channel.ChannelHandlerContext;

@@ -1,7 +1,7 @@
-package com.smarthttp;
+package com.blackhttp;
 
 import com.black.Log;
-import com.smarthttp.githttp.RepoResolver;
+import com.blackhttp.githttp.RepoResolver;
 import io.netty.bootstrap.ServerBootstrap;
 import io.netty.channel.Channel;
 import io.netty.channel.ChannelInitializer;

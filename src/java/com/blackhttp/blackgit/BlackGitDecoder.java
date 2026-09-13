@@ -1,4 +1,4 @@
-package com.smarthttp.blackgit;
+package com.blackhttp.blackgit;
 
 import com.black.Log;
 import io.netty.buffer.ByteBuf;

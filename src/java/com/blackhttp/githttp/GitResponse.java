@@ -1,6 +1,6 @@
-package com.smarthttp.githttp;
+package com.blackhttp.githttp;
 
-import com.smarthttp.SpooledBuffer;
+import com.blackhttp.SpooledBuffer;
 import io.netty.handler.codec.http.HttpResponseStatus;
 
 final class GitResponse {

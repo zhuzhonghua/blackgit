@@ -1,4 +1,4 @@
-package com.smarthttp.blackgit;
+package com.blackhttp.blackgit;
 
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;

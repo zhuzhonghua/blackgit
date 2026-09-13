@@ -1,4 +1,4 @@
-package com.smarthttp.githttp;
+package com.blackhttp.githttp;
 
 import org.eclipse.jgit.internal.storage.file.FileRepository;
 import org.eclipse.jgit.lib.Repository;

@@ -1,9 +1,9 @@
-package com.smarthttp;
+package com.blackhttp;
 
 import com.black.Log;
-import com.smarthttp.blackgit.BlackGitDecoder;
-import com.smarthttp.blackgit.BlackGitHandler;
-import com.smarthttp.githttp.GitHttpHandler;
+import com.blackhttp.blackgit.BlackGitDecoder;
+import com.blackhttp.blackgit.BlackGitHandler;
+import com.blackhttp.githttp.GitHttpHandler;
 import io.netty.buffer.ByteBuf;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.ChannelInboundHandlerAdapter;
