@@ -4,6 +4,8 @@ import com.black.Log;
 import com.blackhttp.githttp.RepoResolver;
 import io.netty.bootstrap.ServerBootstrap;
 import io.netty.channel.Channel;
+import io.netty.channel.ChannelHandlerContext;
+import io.netty.channel.ChannelInboundHandlerAdapter;
 import io.netty.channel.ChannelInitializer;
 import io.netty.channel.ChannelOption;
 import io.netty.channel.EventLoopGroup;
@@ -46,6 +48,7 @@ final class Server {
                 .childHandler(new ChannelInitializer<SocketChannel>() {
                     @Override
                     protected void initChannel(SocketChannel ch) {
+                        ch.pipeline().addLast(new LifecycleLogger());
                         ch.pipeline().addLast(new ProtocolDetector(Server.this));
                     }
                 })
@@ -85,6 +88,20 @@ final class Server {
 
     EventExecutorGroup httpExecutor() {
         return httpExecutor;
+    }
+
+    private static final class LifecycleLogger extends ChannelInboundHandlerAdapter {
+        @Override
+        public void channelActive(ChannelHandlerContext ctx) {
+            Log.net.debug("connection established from {}", ctx.channel().remoteAddress());
+            ctx.fireChannelActive();
+        }
+
+        @Override
+        public void channelInactive(ChannelHandlerContext ctx) {
+            Log.net.debug("connection closed from {}", ctx.channel().remoteAddress());
+            ctx.fireChannelInactive();
+        }
     }
 
     private static ThreadFactory daemonThreads(String prefix) {
