@@ -47,7 +47,8 @@ class Net:
     self.sock.sendall(data)
 
   def call(self, protocol, body=b''):
-    req = protocol.encode('utf-8') + b'\n' + struct.pack('!I', len(body)) + body
+    name = protocol.encode('utf-8')
+    req = struct.pack('!I', len(name) + 1 + len(body)) + name + b'\n' + body
     self._send_all(req)
 
     resp_len_data = self.recv0(4)

@@ -21,89 +21,104 @@ public class SocketClient {
     private ByteBuffer bodybuf;
     private ConcurrentLinkedQueue<ByteBuffer> outq = new ConcurrentLinkedQueue<>();
     public SocketAddress addr;
-    private static final int MAX_BUFFER_SIZE = 65535;
 
     private int readState = 1;
-    private String protocolName = null;
+    private int frameLength = 0;
+    private ByteBuffer namebuf;
     private int bodyLength = 0;
+    private String protocolName = null;
+    private static final int MAX_BUFFER_SIZE = 65535;
+    private static final int MAX_NAME_LENGTH = 256;
+    private static final int MAX_FRAME_LENGTH = MAX_NAME_LENGTH + 1 + MAX_BUFFER_SIZE;
 
     public SocketClient(Selector sel, SocketChannel c, SocketAddress a) {
         selector = sel;
         channel = c;
         addr = a;
-        headerbuf = ByteBuffer.allocate(256).order(ByteOrder.BIG_ENDIAN);
+        headerbuf = ByteBuffer.allocate(4 + MAX_NAME_LENGTH + 1).order(ByteOrder.BIG_ENDIAN);
     }
 
     public boolean read() throws Exception {
         switch (readState) {
-            case 1: return readProtocolName();
-            case 2: return readBodyLength();
+            case 1: return readFrameLength();
+            case 2: return readName();
             case 3: return readBody();
             default: throw new Exception("internal err state=" + readState);
         }
     }
 
-    private boolean readProtocolName() throws Exception {
+    private boolean readFrameLength() throws Exception {
         int count = channel.read(headerbuf);
         if (count < 0) {
-            throw new Exception("read protocol name error " + addr);
+            throw new Exception("read frame length error " + addr);
         }
-        
-        int newlinePos = -1;
-        for (int i = 0; i < headerbuf.position(); i++) {
-            if (headerbuf.get(i) == '\n') {
-                newlinePos = i;
-                break;
-            }
-        }
-        
-        if (newlinePos >= 0) {
-            headerbuf.flip();
-            protocolName = new String(headerbuf.array(), 0, newlinePos+1).trim();
-            headerbuf.position(newlinePos+1);
 
-            Log.net.debug("Protocol: {}", protocolName);
-            
-            Protocol protocol = ProtocolRegistry.get(protocolName);
-            if (protocol == null) {
-                throw new Exception("Unknown protocol: " + protocolName);
-            }
-            
-            readState = 2;
-            headerbuf.compact();
-        } else if (!headerbuf.hasRemaining()) {
-            throw new Exception("Protocol name too long");
-        }
-        return count > 0;
-    }
-
-    private boolean readBodyLength() throws Exception {
-        int count = channel.read(headerbuf);
-        if (count < 0) {
-            throw new Exception("read body length error " + addr);
-        }
         if (headerbuf.position() >= 4) {
             headerbuf.flip();
-            bodyLength = headerbuf.getInt();
-            if (bodyLength > MAX_BUFFER_SIZE || bodyLength < 0) {
-                throw new Exception("illegal body length " + bodyLength + " addr " + addr);
+            frameLength = headerbuf.getInt();
+            if (frameLength < 2 || frameLength > MAX_FRAME_LENGTH) {
+                throw new Exception("illegal frame length " + frameLength + " addr " + addr);
             }
-            if (headerbuf.remaining() > bodyLength) {
-                throw new Exception("too much data, illegal body length " + bodyLength + " addr " + addr);
-            }
-            readState = 3;
-            bodybuf = ByteBuffer.allocate(bodyLength);
-            bodybuf.put(headerbuf);
+
+            namebuf = ByteBuffer.allocate(4 + MAX_NAME_LENGTH + 1);
+            namebuf.put(headerbuf);
             headerbuf.clear();
+            readState = 2;
             return true;
         }
         return count > 0;
     }
 
-    private boolean readBody() throws Exception {
-        int count = channel.read(bodybuf);
+    private boolean readName() throws Exception {
+        int count = channel.read(namebuf);
         if (count < 0) {
-            throw new Exception("readbody error " + addr);
+            throw new Exception("read name error " + addr);
+        }
+
+        int limit = namebuf.position();
+        for (int i = 0; i < limit; i++) {
+            if (namebuf.get(i) == '\n') {
+                namebuf.flip();
+                int nameLen = i;
+                if (nameLen <= 0 || nameLen > MAX_NAME_LENGTH) {
+                    throw new Exception("illegal protocol name length " + nameLen + " addr " + addr);
+                }
+                protocolName = new String(namebuf.array(), 0, nameLen).trim();
+                Log.net.debug("Protocol: {}", protocolName);
+
+                Protocol protocol = ProtocolRegistry.get(protocolName);
+                if (protocol == null) {
+                    throw new Exception("Unknown protocol: " + protocolName);
+                }
+
+                bodyLength = frameLength - nameLen - 1;
+                if (bodyLength < 0 || bodyLength > MAX_BUFFER_SIZE) {
+                    throw new Exception("illegal body length " + bodyLength + " addr " + addr);
+                }
+                namebuf.position(i + 1);
+                bodybuf = ByteBuffer.allocate(bodyLength);
+                byte[] prefix = new byte[namebuf.remaining()];
+                namebuf.get(prefix);
+                int avail = Math.min(bodybuf.remaining(), prefix.length);
+                bodybuf.put(prefix, 0, avail);
+
+                readState = 3;
+                return true;
+            }
+        }
+        if (limit > MAX_NAME_LENGTH) {
+            throw new Exception("Protocol name too long " + addr);
+        }
+        return count > 0;
+    }
+
+    private boolean readBody() throws Exception {
+        int count = 0;
+        if (bodybuf.hasRemaining()) {
+            count = channel.read(bodybuf);
+            if (count < 0) {
+                throw new Exception("readbody error " + addr);
+            }
         }
 
         if (!bodybuf.hasRemaining()) {
@@ -115,6 +130,7 @@ public class SocketClient {
             }
             bodybuf = null;
             protocolName = null;
+            return true;
         }
         return count > 0;
     }

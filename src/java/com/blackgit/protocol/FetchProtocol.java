@@ -19,7 +19,7 @@ import java.util.HashSet;
 import java.util.Set;
 
 public class FetchProtocol implements Protocol {
-    public static final int MAX_COMMITS = 100;
+    public static final int MAX_COMMITS = 10;
 
     @Override
     public String name() {
@@ -36,33 +36,66 @@ public class FetchProtocol implements Protocol {
     }
 
     public byte[] getFetch(Repository repository, String[] shas) throws IOException {
-        backfillMissing(repository, shas);
+        // NOTE: depth=/filter= header lines from the helper are
+        // intentionally ignored: the server always returns at most
+        // MAX_COMMITS consecutive commits. The client is shallow+sparse
+        // by default (.git/shallow marks the boundary), trees are
+        // included per commit, blobs only when a blob is explicitly
+        // requested (promisor on-demand).
+        java.util.List<String> shaList = new java.util.ArrayList<>();
+        for (String line : shas) {
+            String t = line == null ? "" : line.trim();
+            if (t.isEmpty() || t.startsWith("depth=") || t.startsWith("filter=")) {
+                continue;
+            }
+            shaList.add(t);
+        }
 
         Set<RevObject> objects = new HashSet<>();
 
         Set<String> already = new HashSet<>();
-        for (String sha : shas) {
+        boolean backfilled = false;
+        for (String sha : shaList) {
             if (already.contains(sha))
                 continue;
             already.add(sha);
             ObjectId id = ObjectId.fromString(sha.trim());
 
-            try (RevWalk rw = new RevWalk(repository)) {
-                RevObject obj = rw.parseAny(id);
+            // Lazy backfill: only hit origin when the object is not
+            // found locally (parse fails), then retry once.
+            boolean done = false;
+            while (!done) {
+                try (RevWalk rw = new RevWalk(repository)) {
+                    RevObject obj = rw.parseAny(id);
 
-                if (obj instanceof RevCommit) {
-                    rw.markStart((RevCommit) obj);
-                    int n = 0;
-                    for (RevCommit c : rw) {
-                        objects.add(c);
-                        if (++n >= MAX_COMMITS) {
-                            break;
+                    if (obj instanceof RevCommit) {
+                        rw.markStart((RevCommit) obj);
+                        int n = 0;
+                        for (RevCommit c : rw) {
+                            objects.add(c);
+                            collectTreeRecursive(repository, rw, c.getTree().getId(), objects);
+                            if (++n >= MAX_COMMITS) {
+                                break;
+                            }
                         }
+                    } else if (obj instanceof RevTree) {
+                        collectTreeRecursive(repository, rw, id, objects);
+                    } else if (obj instanceof RevBlob) {
+                        objects.add(obj);
                     }
-                } else if (obj instanceof RevTree) {
-                    collectTree(repository, rw, id, 0, 1, objects);
-                } else if (obj instanceof RevBlob) {
-                    objects.add(obj);
+                    done = true;
+                } catch (MissingObjectException | IncorrectObjectTypeException e) {
+                    if (!backfilled && OriginBackfill.hasOrigin(repository)) {
+                        Log.logger.info("fetch backfill from origin for missing {}", id.name());
+                        try {
+                            OriginBackfill.fetchFromOrigin(repository);
+                        } catch (Exception ex) {
+                            Log.logger.warn("fetch backfill from origin failed: {}", ex.toString());
+                        }
+                        backfilled = true;
+                    } else {
+                        throw e;
+                    }
                 }
             }
         }
@@ -76,31 +109,17 @@ public class FetchProtocol implements Protocol {
         return baos.toByteArray();
     }
 
-    private static void backfillMissing(Repository repository, String[] shas) throws IOException {
-        Set<ObjectId> missing = new HashSet<>();
-        for (String sha : shas) {
-            String t = sha == null ? "" : sha.trim();
-            if (t.isEmpty()) {
-                continue;
-            }
-            ObjectId id;
-            try {
-                id = ObjectId.fromString(t);
-            } catch (IllegalArgumentException e) {
-                continue;
-            }
-            try (RevWalk rw = new RevWalk(repository)) {
-                rw.parseAny(id);
-            } catch (MissingObjectException | IncorrectObjectTypeException e) {
-                missing.add(id);
-            }
-        }
-        if (!missing.isEmpty() && OriginBackfill.hasOrigin(repository)) {
-            Log.logger.info("fetch backfill {} missing objects from origin", missing.size());
-            try {
-                OriginBackfill.fetchFromOrigin(repository);
-            } catch (Exception e) {
-                Log.logger.warn("fetch backfill from origin failed: {}", e.toString());
+    private void collectTreeRecursive(Repository repository, RevWalk rw, ObjectId treeId,
+                                        Set<RevObject> objects) throws IOException {
+        objects.add(rw.parseTree(treeId));
+        try (TreeWalk tw = new TreeWalk(repository)) {
+            tw.addTree(treeId);
+            tw.setRecursive(false);
+            while (tw.next()) {
+                if (FileMode.TREE.equals(tw.getFileMode(0))) {
+                    collectTreeRecursive(repository, rw, tw.getObjectId(0), objects);
+                }
+                // skip blobs: blob:none, fetched on demand via promisor
             }
         }
     }

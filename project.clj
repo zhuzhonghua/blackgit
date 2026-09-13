@@ -17,6 +17,7 @@
                  [com.github.seancorfield/next.jdbc "1.3.1093"]
                  [org.eclipse.jgit/org.eclipse.jgit "6.10.0.202406032230-r"]
                  [com.google.protobuf/protobuf-java "4.35.1"]
+                 [io.netty/netty-all "4.1.131.Final"]
                  ]
   :jvm-opts ["-Dclojure.tools.logging.factory=clojure.tools.logging.impl/log4j2-factory"]
   :java-source-paths ["src/java"]

@@ -81,7 +81,15 @@ class FetchCommand:
     return (sha, ref)
 
   def encodefetchrequest(self, shas):
-    text = "\n".join(shas)
+    lines = []
+    depth = self.blackw.options.get("depth")
+    if depth is not None and str(depth).strip() != "":
+      lines.append(f"depth={str(depth).strip()}")
+    filt = self.blackw.options.get("filter")
+    if filt is not None and str(filt).strip() != "":
+      lines.append(f"filter={str(filt).strip()}")
+    lines.extend(shas)
+    text = "\n".join(lines)
     return text.encode('utf-8')
 
   def _write_pack(self, pack):
@@ -99,24 +107,57 @@ class OptionCommand:
 
   def run(self, line):
     bw = self.blackw
-    if line.startswith("option verbosity"):
+    if line.startswith("option verbosity "):
+      bw.options["verbosity"] = line[len("option verbosity "):]
       bw.write("ok\n")
-    elif line.startswith("option filter"):
+    elif line.startswith("option progress "):
+      bw.options["progress"] = line[len("option progress "):]
       bw.write("ok\n")
-    elif line.startswith("option from-promisor"):
+    elif line.startswith("option depth "):
+      bw.options["depth"] = line[len("option depth "):]
       bw.write("ok\n")
-    elif line.startswith("option progress"):
+    elif line.startswith("option filter "):
+      bw.options["filter"] = line[len("option filter "):]
       bw.write("ok\n")
-    elif line.startswith("option check-connectivity"):
+    elif line.startswith("option from-promisor "):
+      bw.options["from-promisor"] = line[len("option from-promisor "):]
+      bw.write("ok\n")
+    elif line.startswith("option followtags "):
+      bw.options["followtags"] = line[len("option followtags "):]
+      bw.write("ok\n")
+    elif line.startswith("option cloning "):
+      bw.options["cloning"] = line[len("option cloning "):]
+      bw.write("ok\n")
+    elif line.startswith("option update-shallow "):
+      bw.options["update-shallow"] = line[len("option update-shallow "):]
+      bw.write("ok\n")
+    elif line.startswith("option updateshallow "):
+      bw.options["update-shallow"] = line[len("option updateshallow "):]
+      bw.write("ok\n")
+    elif line.startswith("option deepen-since "):
+      bw.options["deepen-since"] = line[len("option deepen-since "):]
+      bw.write("ok\n")
+    elif line.startswith("option deepen-not "):
+      bw.options["deepen-not"] = line[len("option deepen-not "):]
+      bw.write("ok\n")
+    elif line.startswith("option deepen-relative "):
+      bw.options["deepen-relative"] = line[len("option deepen-relative "):]
+      bw.write("ok\n")
+    elif line.startswith("option dry-run "):
+      bw.options["dry-run"] = line[len("option dry-run "):]
+      bw.write("ok\n")
+    elif line.startswith("option force "):
+      bw.options["force"] = line[len("option force "):]
+      bw.write("ok\n")
+    elif line.startswith("option check-connectivity "):
       bw.write("unsupported\n")
-    elif line.startswith("option update-shallow"):
-      bw.write("ok\n")
     else:
       bw.write("unsupported\n")
 
 class RemoteBlackW:
   def __init__(self):
     self.net = blackgit.Net()
+    self.options = {}
 
   def run(self):
     try:
