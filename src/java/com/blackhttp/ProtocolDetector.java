@@ -14,7 +14,6 @@ import io.netty.handler.ssl.SslContext;
 import io.netty.handler.ssl.SslHandler;
 import io.netty.util.ReferenceCountUtil;
 
-import java.nio.charset.StandardCharsets;
 import java.util.Set;
 
 /**
@@ -23,7 +22,7 @@ import java.util.Set;
  * custom BlackGit wire protocol, then installs the matching pipeline.
  */
 final class ProtocolDetector extends ChannelInboundHandlerAdapter {
-    private static final int MAX_HEAD = 64;
+    
     private static final Set<String> HTTP_METHODS = Set.of(
             "GET", "POST", "HEAD", "PUT", "DELETE", "PATCH", "OPTIONS", "TRACE", "CONNECT");
 
@@ -39,7 +38,7 @@ final class ProtocolDetector extends ChannelInboundHandlerAdapter {
 
     @Override
     public void channelActive(ChannelHandlerContext ctx) throws Exception {
-        Log.logger.info("connection established from {}", ctx.channel().remoteAddress());
+        Log.net.debug("connection established from {}", ctx.channel().remoteAddress());
         ctx.fireChannelActive();
     }
 
@@ -57,10 +56,13 @@ final class ProtocolDetector extends ChannelInboundHandlerAdapter {
             head.writeBytes(in);
             in.release();
 
-            Route route = decide();
-            if (route != null) {
+            // With at least the 4 leading bytes (TLS record header, HTTP method
+            // token, or the frame length of the wire protocol) decide() can
+            // always produce a Route, so don't proceed until we have them.
+            if (head.readableBytes() >= 4) {
                 decided = true;
-                Log.logger.debug("{} from {} -> {} pipeline",
+                Route route = decide();
+                Log.net.debug("{} from {} -> {} pipeline",
                         ctx.channel().remoteAddress(), route, ctx.channel().localAddress());
                 install(ctx, route);
                 if (head.isReadable()) {
@@ -76,35 +78,37 @@ final class ProtocolDetector extends ChannelInboundHandlerAdapter {
     }
 
     private Route decide() {
-        int readable = head.readableBytes();
-        if (readable >= 2 && server.sslEnabled()
-                && head.getUnsignedByte(head.readerIndex()) == 0x16
-                && head.getUnsignedByte(head.readerIndex() + 1) == 0x03) {
+        int base = head.readerIndex();
+        if (server.sslEnabled()
+                && head.getUnsignedByte(base) == 0x16
+                && head.getUnsignedByte(base + 1) == 0x03) {
             return Route.TLS_HTTP;
         }
+        return isHttpMethodPrefix(head) ? Route.HTTP : Route.BLACKGIT;
+        }
+
+    /**
+     * HTTP request lines always begin with a fixed method token. The first 4
+     * bytes are therefore "GET ", "POST", "HEAD", "PUT ", or the first 4
+     * letters of a longer method. A BlackGit frame starts with a big-endian
+     * length which falls far below the byte values of these tokens, so the two
+     * protocols can never collide on the first 4 bytes.
+     */
+    private static boolean isHttpMethodPrefix(ByteBuf head) {
         int base = head.readerIndex();
-        int scan = Math.min(readable, MAX_HEAD);
-        int newline = -1;
-        int space = -1;
-        for (int i = 0; i < scan; i++) {
-            byte b = head.getByte(base + i);
-            if (b == '\n') {
-                newline = i;
-                break;
-            }
-            if (b == ' ') {
-                space = i;
-                break;
-            }
-        }
-        if (newline >= 0) {
-            return Route.BLACKGIT;
-        }
-        if (space >= 0) {
-            String token = head.toString(base, space, StandardCharsets.US_ASCII);
-            return HTTP_METHODS.contains(token) ? Route.HTTP : Route.BLACKGIT;
-        }
-        return readable >= MAX_HEAD ? Route.BLACKGIT : null;
+        byte b0 = head.getByte(base);
+        byte b1 = head.getByte(base + 1);
+        byte b2 = head.getByte(base + 2);
+        byte b3 = head.getByte(base + 3);
+        return (b0 == 'G' && b1 == 'E' && b2 == 'T' && b3 == ' ')
+                || (b0 == 'P' && b1 == 'U' && b2 == 'T' && b3 == ' ')
+                || (b0 == 'P' && b1 == 'O' && b2 == 'S' && b3 == 'T')
+                || (b0 == 'H' && b1 == 'E' && b2 == 'A' && b3 == 'D')
+                || (b0 == 'D' && b1 == 'E' && b2 == 'L' && b3 == 'E')
+                || (b0 == 'P' && b1 == 'A' && b2 == 'T' && b3 == 'C')
+                || (b0 == 'O' && b1 == 'P' && b2 == 'T' && b3 == 'I')
+                || (b0 == 'T' && b1 == 'R' && b2 == 'A' && b3 == 'C')
+                || (b0 == 'C' && b1 == 'O' && b2 == 'N' && b3 == 'N');
     }
 
     private void install(ChannelHandlerContext ctx, Route route) {
@@ -137,14 +141,14 @@ final class ProtocolDetector extends ChannelInboundHandlerAdapter {
 
     @Override
     public void channelInactive(ChannelHandlerContext ctx) throws Exception {
-        Log.logger.debug("connection closed from {}", ctx.channel().remoteAddress());
+        Log.net.debug("connection closed from {}", ctx.channel().remoteAddress());
         releaseHead();
         ctx.fireChannelInactive();
     }
 
     @Override
     public void exceptionCaught(ChannelHandlerContext ctx, Throwable cause) {
-        Log.logger.error("error on connection {} : {}",
+        Log.net.error("error on connection {} : {}",
                 ctx.channel().remoteAddress(), cause.toString(), cause);
         releaseHead();
         ctx.close();
