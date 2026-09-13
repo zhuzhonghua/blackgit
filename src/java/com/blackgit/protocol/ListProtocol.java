@@ -1,7 +1,7 @@
 package com.blackgit.protocol;
 
 import com.blackgit.BlackGit;
-import com.blackgit.Log;
+import com.black.Log;
 import com.blackgit.OriginBackfill;
 import com.blackgit.SocketClient;
 import org.eclipse.jgit.api.Git;
@@ -10,7 +10,6 @@ import org.eclipse.jgit.lib.Repository;
 import org.eclipse.jgit.revwalk.RevCommit;
 import org.eclipse.jgit.revwalk.RevWalk;
 
-import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.util.HashMap;
 import java.util.List;

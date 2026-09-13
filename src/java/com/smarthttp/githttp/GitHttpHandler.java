@@ -1,6 +1,6 @@
 package com.smarthttp.githttp;
 
-import com.blackgit.Log;
+import com.black.Log;
 import com.smarthttp.Config;
 import com.smarthttp.SpooledBuffer;
 import io.netty.buffer.ByteBuf;
@@ -13,7 +13,6 @@ import io.netty.handler.codec.http.HttpContent;
 import io.netty.handler.codec.http.HttpMethod;
 import io.netty.handler.codec.http.HttpRequest;
 import io.netty.handler.codec.http.HttpResponse;
-import io.netty.handler.codec.http.HttpResponseStatus;
 import io.netty.handler.codec.http.HttpUtil;
 import io.netty.handler.codec.http.HttpVersion;
 import io.netty.handler.codec.http.LastHttpContent;

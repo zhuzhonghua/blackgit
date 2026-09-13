@@ -1,6 +1,6 @@
 package com.smarthttp;
 
-import com.blackgit.Log;
+import com.black.Log;
 import com.smarthttp.blackgit.BlackGitDecoder;
 import com.smarthttp.blackgit.BlackGitHandler;
 import com.smarthttp.githttp.GitHttpHandler;

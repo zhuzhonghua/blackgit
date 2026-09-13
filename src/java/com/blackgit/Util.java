@@ -1,5 +1,6 @@
 package com.blackgit;
 
+import com.black.Log;
 import org.apache.commons.lang3.exception.ExceptionUtils;
 import clojure.lang.Compiler.CompilerException;
 import clojure.lang.RT;

@@ -1,6 +1,6 @@
 package com.blackgit.protocol;
 
-import com.blackgit.Log;
+import com.black.Log;
 import com.blackgit.SocketClient;
 
 import java.nio.ByteBuffer;

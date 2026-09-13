@@ -1,5 +1,6 @@
 package com.blackgit;
 
+import com.black.Log;
 import org.eclipse.jgit.api.Git;
 import org.eclipse.jgit.api.ListBranchCommand;
 import org.eclipse.jgit.lib.ObjectId;

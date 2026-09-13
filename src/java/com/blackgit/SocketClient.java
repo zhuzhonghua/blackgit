@@ -1,5 +1,6 @@
 package com.blackgit;
 
+import com.black.Log;
 import com.blackgit.protocol.Protocol;
 import com.blackgit.protocol.ProtocolRegistry;
 

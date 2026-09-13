@@ -1,6 +1,6 @@
 package com.smarthttp.blackgit;
 
-import com.blackgit.Log;
+import com.black.Log;
 import io.netty.buffer.ByteBuf;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.handler.codec.ByteToMessageDecoder;

@@ -2,7 +2,7 @@ package com.smarthttp.githttp;
 
 import com.smarthttp.Config;
 import com.smarthttp.SpooledBuffer;
-import com.blackgit.Log;
+import com.black.Log;
 import io.netty.handler.codec.http.HttpResponseStatus;
 import org.eclipse.jgit.lib.Repository;
 import org.eclipse.jgit.transport.PacketLineOut;

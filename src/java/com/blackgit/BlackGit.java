@@ -1,10 +1,10 @@
 package com.blackgit;
 
+import com.black.Log;
 import org.eclipse.jgit.lib.Repository;
 import org.eclipse.jgit.storage.file.FileRepositoryBuilder;
 
 import java.io.File;
-import java.util.Map;
 
 public class BlackGit {
     public static BlackGit bg = null;

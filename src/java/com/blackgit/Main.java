@@ -1,5 +1,7 @@
 package com.blackgit;
 
+import com.black.Log;
+
 public class Main {
     public static void main(String[] args) throws Exception {
         Util.printcp();

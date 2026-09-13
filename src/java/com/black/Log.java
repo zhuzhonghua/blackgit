@@ -1,4 +1,4 @@
-package com.blackgit;
+package com.black;
 
 
 import org.apache.logging.log4j.Level;
