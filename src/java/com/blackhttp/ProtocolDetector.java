@@ -74,6 +74,7 @@ final class ProtocolDetector extends ByteToMessageDecoder {
      * protocols can never collide on the first 4 bytes.
      */
     private static boolean isHttpMethodPrefix(ByteBuf in) {
+        // Set.of("GET", "POST", "HEAD", "PUT", "DELETE", "PATCH", "OPTIONS", "TRACE", "CONNECT")
         int base = in.readerIndex();
         byte b0 = in.getByte(base);
         byte b1 = in.getByte(base + 1);
