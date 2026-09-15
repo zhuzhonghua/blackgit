@@ -23,12 +23,15 @@ import java.io.BufferedInputStream;
 import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
+import java.net.SocketAddress;
 import java.util.List;
+import java.util.Map;
 
 import static io.netty.handler.codec.http.HttpHeaderNames.CACHE_CONTROL;
 import static io.netty.handler.codec.http.HttpHeaderNames.CONNECTION;
 import static io.netty.handler.codec.http.HttpHeaderNames.CONTENT_LENGTH;
 import static io.netty.handler.codec.http.HttpHeaderNames.CONTENT_TYPE;
+import static io.netty.handler.codec.http.HttpHeaderNames.HOST;
 import static io.netty.handler.codec.http.HttpHeaderValues.CLOSE;
 import static io.netty.handler.codec.http.HttpResponseStatus.BAD_REQUEST;
 import static io.netty.handler.codec.http.HttpResponseStatus.INTERNAL_SERVER_ERROR;
@@ -42,6 +45,7 @@ public final class GitHttpHandler extends ChannelInboundHandlerAdapter {
     private HttpRequest request;
     private String method;
     private String path;
+    private String requestUrl;
     private boolean keepAlive;
     private boolean bodyless;
     private File repoDir;
@@ -77,8 +81,14 @@ public final class GitHttpHandler extends ChannelInboundHandlerAdapter {
         int q = uri.indexOf('?');
         path = q < 0 ? uri : uri.substring(0, q);
         String query = q < 0 ? null : uri.substring(q + 1);
+        String host = req.headers().get(HOST);
+        if (host == null) {
+            SocketAddress local = ctx.channel().localAddress();
+            host = local == null ? "localhost" : local.toString();
+        }
+        requestUrl = (config.tls ? "https" : "http") + "://" + host + uri;
         Log.logger.debug("HTTP {} {} from {} keepAlive={} query={}",
-                method, path, ctx.channel().remoteAddress(), keepAlive, query);
+                method, requestUrl, ctx.channel().remoteAddress(), keepAlive, query);
 
         String repoName = RepoResolver.repoName(path);
         if (repoName == null) {
@@ -106,8 +116,11 @@ public final class GitHttpHandler extends ChannelInboundHandlerAdapter {
                 bodyless = HttpMethod.HEAD.name().equals(method);
                 String service = queryParameter(req, "service");
                 boolean v2 = wantsV2(req);
-                Log.logger.debug("info/refs request service={} protocolV2={}", service, v2);
-                writeResponse(ctx, new InfoRefsService(dir, config).advertise(service, v2));
+                boolean shallowHint = hasQueryParameter(req, "shallow");
+                Log.logger.debug("info/refs request service={} protocolV2={} shallowHint={}",
+                        service, v2, shallowHint);
+                writeResponse(ctx, new InfoRefsService(dir, config)
+                        .advertise(service, v2, shallowHint));
                 return;
             }
             writeResponse(ctx, GitResponse.error(NOT_FOUND, "not found"));
@@ -141,9 +154,10 @@ public final class GitHttpHandler extends ChannelInboundHandlerAdapter {
                 GitResponse resp;
                 try (reqBody) {
                     boolean v2 = req != null && wantsV2(req);
+                    ShallowRequest shallow = FetchRequestParser.parse(reqBody.input(), v2);
                     BufferedInputStream bin = new BufferedInputStream(reqBody.input());
                     if ("git-upload-pack".equals(target)) {
-                        resp = new UploadPackService(dir, config).upload(bin, v2);
+                        resp = new UploadPackService(dir, config).upload(bin, v2, shallow);
                     } else if ("git-receive-pack".equals(target)) {
                         resp = new ReceivePackService(dir, config).receive(bin);
                     } else {
@@ -160,6 +174,7 @@ public final class GitHttpHandler extends ChannelInboundHandlerAdapter {
         if (content instanceof LastHttpContent) {
             request = null;
             path = null;
+            requestUrl = null;
             repoDir = null;
         }
     }
@@ -185,6 +200,10 @@ public final class GitHttpHandler extends ChannelInboundHandlerAdapter {
         QueryStringDecoder decoder = new QueryStringDecoder(req.uri());
         List<String> values = decoder.parameters().get(name);
         return values == null || values.isEmpty() ? null : values.get(0);
+    }
+
+    private boolean hasQueryParameter(HttpRequest req, String name) {
+        return new QueryStringDecoder(req.uri()).parameters().containsKey(name);
     }
 
     /** Returns the part after the repo segment, e.g. "/x.git/info/refs" -> "info/refs". */
@@ -215,8 +234,11 @@ public final class GitHttpHandler extends ChannelInboundHandlerAdapter {
         if (!keepAlive) {
             head.headers().set(CONNECTION, CLOSE);
         }
-        Log.logger.debug("response {} {} path={} bytes={} keepAlive={}",
-                resp.status.code(), resp.status.reasonPhrase(), path, length, keepAlive);
+        Log.logger.debug("response {} {} for {} bytes={} keepAlive={}",
+                resp.status.code(), resp.status.reasonPhrase(), requestUrl, length, keepAlive);
+        for (Map.Entry<String, String> header : head.headers().entries()) {
+            Log.logger.debug("  response header {}={}", header.getKey(), header.getValue());
+        }
         ctx.write(head);
 
         if (resp.body != null && !bodyless) {

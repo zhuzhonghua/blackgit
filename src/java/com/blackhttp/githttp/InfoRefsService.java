@@ -23,10 +23,11 @@ final class InfoRefsService {
         this.config = config;
     }
 
-    GitResponse advertise(String service, boolean protocolV2) {
+    GitResponse advertise(String service, boolean protocolV2, boolean shallowHint) {
         try {
             if ("git-upload-pack".equals(service)) {
-                Log.logger.info("info/refs advertise upload-pack v2={} from {}", protocolV2, gitDir);
+                Log.logger.info("info/refs advertise upload-pack v2={} shallow-hint={} from {}",
+                        protocolV2, shallowHint, gitDir);
                 return GitResponse.ok("application/x-git-upload-pack-advertisement",
                         advertiseUploadPack(protocolV2));
             }
