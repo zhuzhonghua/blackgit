@@ -33,4 +33,19 @@ final class GitRepo {
         repo.incrementOpen();
         return repo;
     }
+
+    /**
+     * Enables JGit's partial-clone support for this repository: object filters
+     * ({@code --filter=blob:none}, {@code blob:limit}, {@code tree:...}) and
+     * reachable-but-unadvertised object wants (used by the client's lazy fetch
+     * after a filtered clone). JGit gates these behind {@code uploadpack.*}
+     * config keys; we force them on in memory only (never written back to
+     * disk) so the server behaves for every repository without touching its
+     * config file.
+     */
+    static void configureUploadPack(Repository repo) {
+        repo.getConfig().setBoolean("uploadpack", null, "allowfilter", true);
+        repo.getConfig().setBoolean("uploadpack", null, "allowreachablesha1inwant", true);
+        repo.getConfig().setBoolean("uploadpack", null, "allowtipsha1inwant", true);
+    }
 }

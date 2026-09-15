@@ -20,6 +20,10 @@ final class FetchRequestParser {
     private static final String PACKET_DEEPEN_SINCE = "deepen-since ";
     private static final String PACKET_DEEPEN_NOT = "deepen-not ";
     private static final String PACKET_SHALLOW = "shallow ";
+    private static final String PACKET_FILTER = "filter ";
+    private static final String PACKET_WANT = "want ";
+    private static final String PACKET_HAVE = "have ";
+    private static final String PACKET_COMMAND = "command=";
 
     private FetchRequestParser() {
     }
@@ -27,6 +31,10 @@ final class FetchRequestParser {
     static ShallowRequest parse(InputStream in, boolean protocolV2) {
         int depth = 0;
         long deepenSince = 0;
+        int wantCount = 0;
+        int haveCount = 0;
+        String command = null;
+        String filterSpec = null;
         List<String> deepenNots = new ArrayList<>();
         List<ObjectId> shallows = new ArrayList<>();
         final List<String> lines;
@@ -37,7 +45,9 @@ final class FetchRequestParser {
             return ShallowRequest.NONE;
         }
         for (String line : lines) {
-            if (line.startsWith(PACKET_DEEPEN)) {
+            if (line.startsWith(PACKET_COMMAND)) {
+                command = line.substring(PACKET_COMMAND.length()).trim();
+            } else if (line.startsWith(PACKET_DEEPEN)) {
                 depth = positiveInt(line, PACKET_DEEPEN);
             } else if (line.startsWith(PACKET_DEEPEN_SINCE)) {
                 deepenSince = longValue(line, PACKET_DEEPEN_SINCE);
@@ -50,9 +60,16 @@ final class FetchRequestParser {
                 } catch (IllegalArgumentException e) {
                     Log.logger.debug("ignoring malformed shallow line: {}", line);
                 }
+            } else if (line.startsWith(PACKET_FILTER)) {
+                filterSpec = line.substring(PACKET_FILTER.length()).trim();
+            } else if (line.startsWith(PACKET_WANT)) {
+                wantCount++;
+            } else if (line.startsWith(PACKET_HAVE)) {
+                haveCount++;
             }
         }
-        return new ShallowRequest(depth, deepenSince, deepenNots, shallows, protocolV2);
+        return new ShallowRequest(depth, deepenSince, deepenNots, shallows, protocolV2,
+                command, wantCount, haveCount, filterSpec, lines);
     }
 
     private static int positiveInt(String line, String prefix) {

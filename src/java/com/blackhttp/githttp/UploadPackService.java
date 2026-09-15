@@ -24,6 +24,7 @@ final class UploadPackService {
     GitResponse upload(InputStream in, boolean protocolV2, ShallowRequest shallow) {
         SpooledBuffer out = new SpooledBuffer(config.spoolMemoryLimit);
         try (Repository repo = GitRepo.open(gitDir)) {
+            GitRepo.configureUploadPack(repo);
             UploadPack up = new UploadPack(repo);
             up.setBiDirectionalPipe(false);
             up.setTimeout(0);
@@ -33,6 +34,11 @@ final class UploadPackService {
             up.upload(in, out, null);
             Log.logger.info("upload-pack served {} bytes from {} v2={} {}",
                     out.size(), gitDir, protocolV2, shallow.summary());
+            if (Log.logger.isDebugEnabled()) {
+                for (String line : shallow.requestLines) {
+                    Log.logger.debug("  upload-pack request line: {}", line);
+                }
+            }
             return GitResponse.ok("application/x-git-upload-pack-result", out);
         } catch (PackProtocolException e) {
             closeQuietly(out);

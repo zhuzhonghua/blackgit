@@ -52,6 +52,7 @@ final class InfoRefsService {
     private SpooledBuffer advertiseUploadPack(boolean protocolV2) throws Exception {
         ByteArrayOutputStream buf = new ByteArrayOutputStream();
         try (Repository repo = GitRepo.open(gitDir)) {
+            GitRepo.configureUploadPack(repo);
             UploadPack up = new UploadPack(repo);
             up.setBiDirectionalPipe(false);
             if (protocolV2) {
