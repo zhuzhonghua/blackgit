@@ -1,4 +1,4 @@
-package com.blackgit;
+package com.blackcli;
 
 import com.black.Log;
 import org.eclipse.jgit.api.Git;

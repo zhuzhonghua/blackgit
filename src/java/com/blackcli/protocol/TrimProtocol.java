@@ -1,11 +1,11 @@
-package com.blackgit.protocol;
+package com.blackcli.protocol;
 
 import com.black.Log;
-import com.blackgit.BlackGit;
-import com.blackgit.OriginBackfill;
-import com.blackgit.SocketClient;
-import com.blackgit.Util;
-import com.blackgit.trim.VirtualCommit;
+import com.blackcli.BlackGit;
+import com.blackcli.OriginBackfill;
+import com.blackcli.SocketClient;
+import com.blackcli.Util;
+import com.blackcli.trim.VirtualCommit;
 import org.eclipse.jgit.errors.IncorrectObjectTypeException;
 import org.eclipse.jgit.errors.MissingObjectException;
 import org.eclipse.jgit.internal.storage.pack.PackWriter;

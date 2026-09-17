@@ -1,9 +1,9 @@
-package com.blackgit.protocol;
+package com.blackcli.protocol;
 
-import com.blackgit.BlackGit;
+import com.blackcli.BlackGit;
 import com.black.Log;
-import com.blackgit.OriginBackfill;
-import com.blackgit.SocketClient;
+import com.blackcli.OriginBackfill;
+import com.blackcli.SocketClient;
 import org.eclipse.jgit.api.Git;
 import org.eclipse.jgit.lib.Ref;
 import org.eclipse.jgit.lib.Repository;

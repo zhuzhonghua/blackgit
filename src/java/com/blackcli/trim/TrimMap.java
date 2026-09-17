@@ -1,4 +1,4 @@
-package com.blackgit.trim;
+package com.blackcli.trim;
 
 import org.eclipse.jgit.lib.ObjectId;
 import org.eclipse.jgit.lib.Repository;

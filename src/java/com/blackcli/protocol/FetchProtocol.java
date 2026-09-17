@@ -1,7 +1,7 @@
-package com.blackgit.protocol;
+package com.blackcli.protocol;
 
 import com.black.Log;
-import com.blackgit.*;
+import com.blackcli.*;
 import org.eclipse.jgit.internal.storage.pack.PackWriter;
 import org.eclipse.jgit.errors.IncorrectObjectTypeException;
 import org.eclipse.jgit.errors.MissingObjectException;

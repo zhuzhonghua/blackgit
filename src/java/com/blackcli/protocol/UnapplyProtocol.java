@@ -1,9 +1,9 @@
-package com.blackgit.protocol;
+package com.blackcli.protocol;
 
 import com.black.Log;
-import com.blackgit.BlackGit;
-import com.blackgit.SocketClient;
-import com.blackgit.trim.VirtualCommitUnapply;
+import com.blackcli.BlackGit;
+import com.blackcli.SocketClient;
+import com.blackcli.trim.VirtualCommitUnapply;
 import org.eclipse.jgit.lib.NullProgressMonitor;
 import org.eclipse.jgit.lib.ObjectId;
 import org.eclipse.jgit.lib.ObjectInserter;

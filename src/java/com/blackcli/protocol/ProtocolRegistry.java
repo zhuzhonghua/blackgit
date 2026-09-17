@@ -1,4 +1,4 @@
-package com.blackgit.protocol;
+package com.blackcli.protocol;
 
 import com.black.Log;
 
