@@ -28,8 +28,7 @@ public final class UploadPackService {
      */
     public static void upload(File gitDir, InputStream in, OutputStream out,
                               boolean protocolV2) throws Exception {
-        try (Repository repo = GitRepo.open(gitDir)) {
-            GitRepo.configureUploadPack(repo);
+        Repository repo = GitRepo.open(gitDir); // shared, cached — do not close
             UploadPack up = new UploadPack(repo);
             up.setBiDirectionalPipe(false);
             up.setTimeout(0);
@@ -42,7 +41,6 @@ public final class UploadPackService {
                 throw new GitProtocolException(e.getMessage(), e);
             }
         }
-    }
 
     /**
      * Advertises upload-pack refs.
@@ -55,8 +53,7 @@ public final class UploadPackService {
      */
     public static void advertiseUploadPack(File gitDir, OutputStream out,
                                            boolean protocolV2) throws Exception {
-        try (Repository repo = GitRepo.open(gitDir)) {
-            GitRepo.configureUploadPack(repo);
+        Repository repo = GitRepo.open(gitDir); // shared, cached — do not close
             UploadPack up = new UploadPack(repo);
             up.setBiDirectionalPipe(false);
             if (protocolV2) {
@@ -67,4 +64,3 @@ public final class UploadPackService {
             up.sendAdvertisedRefs(adv, "git-upload-pack");
         }
     }
-}

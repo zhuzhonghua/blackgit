@@ -26,7 +26,7 @@ public final class ReceivePackService {
      */
     public static void receive(File gitDir, InputStream in, OutputStream out)
             throws Exception {
-        try (Repository repo = GitRepo.open(gitDir)) {
+        Repository repo = GitRepo.open(gitDir); // shared, cached — do not close
             ReceivePack rp = new ReceivePack(repo);
             rp.setBiDirectionalPipe(false);
             rp.setTimeout(0);
@@ -36,7 +36,6 @@ public final class ReceivePackService {
                 throw new GitProtocolException(e.getMessage(), e);
             }
         }
-    }
 
     /**
      * Advertises receive-pack refs.
@@ -47,7 +46,7 @@ public final class ReceivePackService {
      * @throws Exception            on I/O or unexpected errors
      */
     public static void advertiseReceivePack(File gitDir, OutputStream out) throws Exception {
-        try (Repository repo = GitRepo.open(gitDir)) {
+        Repository repo = GitRepo.open(gitDir); // shared, cached — do not close
             PacketLineOut pckOut = new PacketLineOut(out);
             RefAdvertiser adv = new RefAdvertiser.PacketLineOutRefAdvertiser(pckOut);
             pckOut.writeString("# service=git-receive-pack\n");
@@ -57,4 +56,3 @@ public final class ReceivePackService {
             rp.sendAdvertisedRefs(adv);
         }
     }
-}
