@@ -104,16 +104,65 @@ class CloneCommand:
                             f'refs/remotes/origin/{branch}'], cwd=dest)
     run(['git', 'checkout', '-b', branch, f'origin/{branch}'], cwd=dest)
 
+class LsCommand:
+  def __init__(self, blackw):
+    self.blackw = blackw
+    self.usage = "usage: git blackw ls [<dir>]"
+
+  def run(self, argv):
+    extra = argv[2:]
+    path = None
+    if len(extra) > 1:
+      raise Exception(f"{self.usage}")
+    if extra and extra[0] in ("-h", "--help"):
+      raise Exception(f"{self.usage}")
+    if extra:
+      path = extra[0]
+    bw = self.blackw
+    toplevel = bw._top()
+    if path is None:
+      bw.run_cmd(['git', 'ls-tree', 'HEAD'], cwd=toplevel)
+      return
+    rel = bw.normalizerel(path)
+    if rel != ".":
+      otype = bw.git_output(['git', 'cat-file', '-t', f'HEAD:{rel}'],
+                            cwd=toplevel).strip()
+      if otype != "tree":
+        raise Exception(f"not a dir {rel}\n{self.usage}")
+      bw.run_cmd(['git', 'ls-tree', f'HEAD:{rel}'], cwd=toplevel)
+    else:
+      bw.run_cmd(['git', 'ls-tree', 'HEAD'], cwd=toplevel)
+
 class BlackGitCli:
   def __init__(self):
-    pass
+    self.toplevel = None
 
   def run(self, argv):
     pout(f"blackw run {argv}")
-    if argv[1] == "clone":
+    if argv[1] == "ls":
+      LsCommand(self).run(argv)
+    elif argv[1] == "clone":
       CloneCommand(self).run(argv)
     else:
       raise Exception(f"unsupport operation {argv[1]}")
+
+  def _top(self):
+    if self.toplevel is None:
+      self.toplevel = self.git_output(["git", "rev-parse", "--show-toplevel"]).strip()
+    return self.toplevel
+
+  def normalizerel(self, p):
+    if p in (".", "./", ""):
+      return "."
+    ap = os.path.realpath(os.path.abspath(p))
+    top = os.path.realpath(os.path.abspath(self._top()))
+    try:
+      rel = os.path.relpath(ap, top)
+    except ValueError:
+      raise Exception(f"path {p} not in repo {top}")
+    if rel.startswith(".."):
+      raise Exception(f"path {p} not in repo {top}")
+    return rel.replace(os.sep, "/")
 
   def git_output(self, cmd, *arg, **args):
     pout(f"{cmd}")
