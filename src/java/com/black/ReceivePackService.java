@@ -30,6 +30,7 @@ public final class ReceivePackService {
             ReceivePack rp = new ReceivePack(repo);
         rp.setAllowNonFastForwards(false); // reject --force / non-fast-forward pushes
         rp.setAllowDeletes(false);         // reject ref deletion
+        rp.setAllowPushOptions(true);      // accept git push -o realcommit= / -o path=
             rp.setBiDirectionalPipe(false);
             rp.setTimeout(0);
             try {
@@ -54,6 +55,7 @@ public final class ReceivePackService {
             pckOut.writeString("# service=git-receive-pack\n");
             pckOut.end();
             ReceivePack rp = new ReceivePack(repo);
+        rp.setAllowPushOptions(true); // advertise the push-options capability to clients
             rp.setBiDirectionalPipe(false);
             rp.sendAdvertisedRefs(adv);
         }
