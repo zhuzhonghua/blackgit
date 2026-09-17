@@ -1,16 +1,14 @@
 package com.blackhttp.githttp;
 
+import com.black.GitProtocolException;
+import com.black.Log;
+import com.black.ShallowRequest;
 import com.blackhttp.Config;
 import com.blackhttp.SpooledBuffer;
-import com.black.Log;
 import io.netty.handler.codec.http.HttpResponseStatus;
-import org.eclipse.jgit.errors.PackProtocolException;
-import org.eclipse.jgit.lib.Repository;
-import org.eclipse.jgit.transport.UploadPack;
 
 import java.io.File;
 import java.io.InputStream;
-import java.util.Collections;
 
 final class UploadPackService {
     private final File gitDir;
@@ -23,15 +21,8 @@ final class UploadPackService {
 
     GitResponse upload(InputStream in, boolean protocolV2, ShallowRequest shallow) {
         SpooledBuffer out = new SpooledBuffer(config.spoolMemoryLimit);
-        try (Repository repo = GitRepo.open(gitDir)) {
-            GitRepo.configureUploadPack(repo);
-            UploadPack up = new UploadPack(repo);
-            up.setBiDirectionalPipe(false);
-            up.setTimeout(0);
-            if (protocolV2) {
-                up.setExtraParameters(Collections.singleton("version=2"));
-            }
-            up.upload(in, out, null);
+        try {
+            com.black.UploadPackService.upload(gitDir, in, out, protocolV2);
             Log.logger.info("upload-pack served {} bytes from {} v2={} {}",
                     out.size(), gitDir, protocolV2, shallow.summary());
             if (Log.logger.isDebugEnabled()) {
@@ -40,7 +31,7 @@ final class UploadPackService {
                 }
             }
             return GitResponse.ok("application/x-git-upload-pack-result", out);
-        } catch (PackProtocolException e) {
+        } catch (GitProtocolException e) {
             closeQuietly(out);
             Log.logger.warn("upload-pack protocol error {} : {}", gitDir, e.getMessage());
             return GitResponse.error(HttpResponseStatus.BAD_REQUEST, e.getMessage());

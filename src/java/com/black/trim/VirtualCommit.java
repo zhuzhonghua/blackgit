@@ -1,4 +1,4 @@
-package com.blackcli.trim;
+package com.black.trim;
 
 import org.eclipse.jgit.lib.CommitBuilder;
 import org.eclipse.jgit.lib.FileMode;

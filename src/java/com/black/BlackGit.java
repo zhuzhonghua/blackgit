@@ -1,6 +1,5 @@
-package com.blackcli;
+package com.black;
 
-import com.black.Log;
 import org.eclipse.jgit.lib.Repository;
 import org.eclipse.jgit.storage.file.FileRepositoryBuilder;
 

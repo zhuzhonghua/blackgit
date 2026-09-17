@@ -1,4 +1,4 @@
-package com.blackhttp.githttp;
+package com.black;
 
 import org.eclipse.jgit.internal.storage.file.FileRepository;
 import org.eclipse.jgit.lib.Repository;
@@ -8,7 +8,7 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 
-final class GitRepo {
+public final class GitRepo {
     private GitRepo() {
     }
 
@@ -17,7 +17,7 @@ final class GitRepo {
      * a bare repository, a normal worktree (with a {@code .git} directory), or a
      * linked worktree whose {@code .git} is a {@code gitdir:} pointer file.
      */
-    static Repository open(File repoDir) throws IOException {
+    public static Repository open(File repoDir) throws IOException {
         File gitDir = repoDir.getAbsoluteFile();
         File dotGit = new File(gitDir, ".git");
         if (dotGit.isDirectory()) {
@@ -43,7 +43,7 @@ final class GitRepo {
      * disk) so the server behaves for every repository without touching its
      * config file.
      */
-    static void configureUploadPack(Repository repo) {
+    public static void configureUploadPack(Repository repo) {
         repo.getConfig().setBoolean("uploadpack", null, "allowfilter", true);
         repo.getConfig().setBoolean("uploadpack", null, "allowreachablesha1inwant", true);
         repo.getConfig().setBoolean("uploadpack", null, "allowtipsha1inwant", true);

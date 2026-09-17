@@ -1,4 +1,4 @@
-package com.blackcli.trim;
+package com.black.trim;
 
 import org.eclipse.jgit.api.Git;
 import org.eclipse.jgit.lib.CommitBuilder;
@@ -23,7 +23,7 @@ import java.util.List;
 
 /**
  * Self-contained tests for {@link VirtualCommitUnapply}. No server, no
- * network: run with `lein run -m com.blackgit.trim.VirtualCommitUnapplyTest`.
+ * network: run with `lein run -m com.black.trim.VirtualCommitUnapplyTest`.
  *
  * Covers: mapping a single virtual child back onto the real tree, preserving
  * unrelated paths, preserving the author/committer/message, parent linkage to

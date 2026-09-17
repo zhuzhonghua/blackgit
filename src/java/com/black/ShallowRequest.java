@@ -1,4 +1,4 @@
-package com.blackhttp.githttp;
+package com.black;
 
 import org.eclipse.jgit.lib.ObjectId;
 
@@ -10,32 +10,32 @@ import java.util.List;
  * forward, the same shallow semantics when fetching from an upstream
  * repository.
  */
-final class ShallowRequest {
-    static final ShallowRequest NONE =
+public final class ShallowRequest {
+    public static final ShallowRequest NONE =
             new ShallowRequest(0, 0, List.of(), List.of(), false, null, 0, 0, null, List.of());
 
     /** Clone/fetch depth; {@code 0} means unbounded. */
-    final int depth;
+    public final int depth;
     /** {@code --shallow-since} epoch timestamp; {@code 0} means not requested. */
-    final long deepenSince;
+    public final long deepenSince;
     /** {@code --shallow-exclude} revisions, in wire order. */
-    final List<String> deepenNots;
+    public final List<String> deepenNots;
     /** Shallow boundary commits the client already holds. */
-    final List<ObjectId> clientShallows;
+    public final List<ObjectId> clientShallows;
     /** Whether the request was a protocol v2 fetch. */
-    final boolean protocolV2;
+    public final boolean protocolV2;
     /** Protocol v2 command ({@code fetch}, {@code ls-refs}); {@code null} for v0/v1. */
-    final String command;
+    public final String command;
     /** Number of {@code want} lines in the request body. */
-    final int wantCount;
+    public final int wantCount;
     /** Number of {@code have} lines in the request body. */
-    final int haveCount;
+    public final int haveCount;
     /** {@code --filter} spec such as {@code blob:none}; {@code null} if absent. */
-    final String filterSpec;
+    public final String filterSpec;
     /** All decoded pkt-line payloads of the request body (for debug logging). */
-    final List<String> requestLines;
+    public final List<String> requestLines;
 
-    ShallowRequest(int depth, long deepenSince, List<String> deepenNots,
+    public ShallowRequest(int depth, long deepenSince, List<String> deepenNots,
                    List<ObjectId> clientShallows, boolean protocolV2, String command,
                    int wantCount, int haveCount, String filterSpec, List<String> requestLines) {
         this.depth = depth;
@@ -51,26 +51,26 @@ final class ShallowRequest {
     }
 
     /** True if the client asked for a shallow (or deepening) fetch. */
-    boolean isShallow() {
+    public boolean isShallow() {
         return depth > 0 || deepenSince > 0 || !deepenNots.isEmpty() || !clientShallows.isEmpty();
     }
 
     /** A log-friendly one-liner covering the whole request body, e.g.
      *  {@code shallow=true depth=1 client-shallows=0 command=fetch wants=1 haves=0 filter=blob:none}. */
-    String summary() {
+    public String summary() {
         StringBuilder sb = new StringBuilder();
         if (isShallow()) {
             sb.append("shallow=true");
-        if (depth > 0) {
-            sb.append(" depth=").append(depth);
-        }
-        if (deepenSince > 0) {
-            sb.append(" deepen-since=").append(deepenSince);
-        }
-        if (!deepenNots.isEmpty()) {
-            sb.append(" deepen-not=").append(deepenNots);
-        }
-        sb.append(" client-shallows=").append(clientShallows.size());
+            if (depth > 0) {
+                sb.append(" depth=").append(depth);
+            }
+            if (deepenSince > 0) {
+                sb.append(" deepen-since=").append(deepenSince);
+            }
+            if (!deepenNots.isEmpty()) {
+                sb.append(" deepen-not=").append(deepenNots);
+            }
+            sb.append(" client-shallows=").append(clientShallows.size());
         } else {
             sb.append("shallow=false");
         }

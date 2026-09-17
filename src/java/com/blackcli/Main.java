@@ -1,5 +1,6 @@
 package com.blackcli;
 
+import com.black.BlackGit;
 import com.black.Log;
 
 public class Main {

@@ -1,14 +1,9 @@
 package com.blackhttp.githttp;
 
+import com.black.Log;
 import com.blackhttp.Config;
 import com.blackhttp.SpooledBuffer;
-import com.black.Log;
 import io.netty.handler.codec.http.HttpResponseStatus;
-import org.eclipse.jgit.lib.Repository;
-import org.eclipse.jgit.transport.PacketLineOut;
-import org.eclipse.jgit.transport.ReceivePack;
-import org.eclipse.jgit.transport.RefAdvertiser;
-import org.eclipse.jgit.transport.UploadPack;
 
 import java.io.ByteArrayOutputStream;
 import java.io.File;
@@ -51,31 +46,13 @@ final class InfoRefsService {
 
     private SpooledBuffer advertiseUploadPack(boolean protocolV2) throws Exception {
         ByteArrayOutputStream buf = new ByteArrayOutputStream();
-        try (Repository repo = GitRepo.open(gitDir)) {
-            GitRepo.configureUploadPack(repo);
-            UploadPack up = new UploadPack(repo);
-            up.setBiDirectionalPipe(false);
-            if (protocolV2) {
-                up.setExtraParameters(java.util.Collections.singleton("version=2"));
-            }
-            RefAdvertiser adv =
-                    new RefAdvertiser.PacketLineOutRefAdvertiser(new PacketLineOut(buf));
-            up.sendAdvertisedRefs(adv, "git-upload-pack");
-        }
+        com.black.UploadPackService.advertiseUploadPack(gitDir, buf, protocolV2);
         return toSpool(buf);
     }
 
     private SpooledBuffer advertiseReceivePack() throws Exception {
         ByteArrayOutputStream buf = new ByteArrayOutputStream();
-        PacketLineOut pckOut = new PacketLineOut(buf);
-        RefAdvertiser adv = new RefAdvertiser.PacketLineOutRefAdvertiser(pckOut);
-        pckOut.writeString("# service=git-receive-pack\n");
-        pckOut.end();
-        try (Repository repo = GitRepo.open(gitDir)) {
-            ReceivePack rp = new ReceivePack(repo);
-            rp.setBiDirectionalPipe(false);
-            rp.sendAdvertisedRefs(adv);
-        }
+        com.black.ReceivePackService.advertiseReceivePack(gitDir, buf);
         return toSpool(buf);
     }
 

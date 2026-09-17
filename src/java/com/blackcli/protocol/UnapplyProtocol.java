@@ -1,44 +1,15 @@
 package com.blackcli.protocol;
 
+import com.black.BlackGit;
 import com.black.Log;
-import com.blackcli.BlackGit;
+import com.black.UnapplyService;
 import com.blackcli.SocketClient;
-import com.blackcli.trim.VirtualCommitUnapply;
-import org.eclipse.jgit.lib.NullProgressMonitor;
-import org.eclipse.jgit.lib.ObjectId;
-import org.eclipse.jgit.lib.ObjectInserter;
-import org.eclipse.jgit.lib.Repository;
-import org.eclipse.jgit.transport.PackParser;
 
-import java.io.ByteArrayInputStream;
 import java.io.IOException;
-import java.io.InputStream;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 
-/**
- * "unapply" protocol — the server-side reverse of a virtual-commit push.
- *
- * A client that built new commits on top of a virtual (trimmed) commit sends
- * them back here; the server expands them into the *real* history and
- * advances the real branch.
- *
- * Request body: header lines (key=value), terminated by an empty line,
- * followed by the raw pack bytes carrying the new virtual objects:
- *
- *   from=<virtual base sha>
- *   to=<virtual tip sha>
- *   branch=<real branch, refs/heads/... or short>   (optional)
- *
- * Reply: one frame
- *   <new real tip sha>\n
- *   count=<number of real commits created>\n
- * or "ERROR: <reason>".
- *
- * Note: the request body is currently capped by the socket layer, so packs
- * must fit within MAX_BUFFER_SIZE. Fine for now; revisit when real pushes land.
- */
 public class UnapplyProtocol implements Protocol {
 
     @Override
@@ -63,34 +34,21 @@ public class UnapplyProtocol implements Protocol {
             byte[] pack = Arrays.copyOfRange(all, split + 2, all.length);
 
             if (pack.length > 0) {
-                importPack(pack);
+                UnapplyService.importPack(BlackGit.bg.repository, pack);
             }
 
-            VirtualCommitUnapply.Result result =
-                    VirtualCommitUnapply.unapply(BlackGit.bg.repository, req.from, req.to, req.branch);
+            UnapplyService.Result result =
+                    UnapplyService.unapply(BlackGit.bg.repository, req.from, req.to, req.branch);
             Log.logger.debug("unapply {}..{} -> {} ({} real commit(s) ref={}) from {}",
-                    req.from.name(), req.to.name(), result.commit.name(), result.count,
-                    req.branch, client.addr);
+                    req.from, req.to, result.commitSha, result.count, req.branch, client.addr);
 
-            client.write((result.commit.name() + "\ncount=" + result.count + "\n")
+            client.write((result.commitSha + "\ncount=" + result.count + "\n")
                     .getBytes(StandardCharsets.UTF_8));
         } catch (Exception e) {
-            String from = req != null ? req.from.name() : "?";
-            String to = req != null ? req.to.name() : "?";
+            String from = req != null ? req.from : "?";
+            String to = req != null ? req.to : "?";
             Log.logger.warn("unapply failed for {}..{} err={}", from, to, e.toString());
             client.write(("ERROR: " + e.getMessage() + "\n").getBytes(StandardCharsets.UTF_8));
-        }
-    }
-
-    private static void importPack(byte[] pack) throws IOException {
-        Repository repo = BlackGit.bg.repository;
-        try (ObjectInserter ins = repo.newObjectInserter();
-             InputStream in = new ByteArrayInputStream(pack)) {
-            PackParser parser = ins.newPackParser(in);
-            parser.setAllowThin(false);
-            parser.setLockMessage("unapply push");
-            parser.parse(NullProgressMonitor.INSTANCE);
-            ins.flush();
         }
     }
 
@@ -114,8 +72,8 @@ public class UnapplyProtocol implements Protocol {
     }
 
     private static final class Req {
-        ObjectId from;
-        ObjectId to;
+        String from;
+        String to;
         String branch;
 
         static Req parse(String text) {
@@ -131,19 +89,18 @@ public class UnapplyProtocol implements Protocol {
                 }
                 String key = l.substring(0, eq);
                 String val = l.substring(eq + 1).trim();
-                try {
                     switch (key) {
                         case "from":
                             if (r.from != null) {
                                 return null;
                             }
-                            r.from = ObjectId.fromString(val);
+                        r.from = val;
                             break;
                         case "to":
                             if (r.to != null) {
                                 return null;
                             }
-                            r.to = ObjectId.fromString(val);
+                        r.to = val;
                             break;
                         case "branch":
                             r.branch = val;
@@ -152,14 +109,15 @@ public class UnapplyProtocol implements Protocol {
                             // future keys ignored
                             break;
                     }
-                } catch (IllegalArgumentException e) {
-                    return null;
-                }
             }
-            if (r.from == null || r.to == null) {
+            if (r.from == null || r.to == null || !isSha(r.from) || !isSha(r.to)) {
                 return null;
             }
             return r;
+        }
+
+        private static boolean isSha(String s) {
+            return s != null && s.matches("[0-9a-fA-F]{40}");
         }
     }
 }

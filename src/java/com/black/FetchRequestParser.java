@@ -1,6 +1,5 @@
-package com.blackhttp.githttp;
+package com.black;
 
-import com.black.Log;
 import org.eclipse.jgit.lib.ObjectId;
 
 import java.io.IOException;
@@ -15,7 +14,7 @@ import java.util.List;
  * depth/shallow negotiation parameters. The body is not consumed: callers read
  * the request once here and again to let JGit negotiate normally.
  */
-final class FetchRequestParser {
+public final class FetchRequestParser {
     private static final String PACKET_DEEPEN = "deepen ";
     private static final String PACKET_DEEPEN_SINCE = "deepen-since ";
     private static final String PACKET_DEEPEN_NOT = "deepen-not ";
@@ -28,7 +27,7 @@ final class FetchRequestParser {
     private FetchRequestParser() {
     }
 
-    static ShallowRequest parse(InputStream in, boolean protocolV2) {
+    public static ShallowRequest parse(InputStream in, boolean protocolV2) {
         int depth = 0;
         long deepenSince = 0;
         int wantCount = 0;

@@ -1,4 +1,4 @@
-package com.blackcli.trim;
+package com.black.trim;
 
 import org.eclipse.jgit.api.Git;
 import org.eclipse.jgit.lib.CommitBuilder;
@@ -23,7 +23,7 @@ import java.util.List;
 
 /**
  * Self-contained tests for {@link VirtualCommit}. No server, no network:
- * run with `lein run -m com.blackgit.trim.VirtualCommitTest`.
+ * run with `lein run -m com.black.trim.VirtualCommitTest`.
  *
  * Covers: subtree trim, message preservation (no marker), parent preservation,
  * determinism, the "." identity path, and failure on a missing / non-tree path.

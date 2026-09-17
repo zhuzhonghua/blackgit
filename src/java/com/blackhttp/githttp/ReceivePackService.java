@@ -1,12 +1,10 @@
 package com.blackhttp.githttp;
 
+import com.black.GitProtocolException;
+import com.black.Log;
 import com.blackhttp.Config;
 import com.blackhttp.SpooledBuffer;
-import com.black.Log;
 import io.netty.handler.codec.http.HttpResponseStatus;
-import org.eclipse.jgit.errors.PackProtocolException;
-import org.eclipse.jgit.lib.Repository;
-import org.eclipse.jgit.transport.ReceivePack;
 
 import java.io.File;
 import java.io.IOException;
@@ -27,14 +25,11 @@ final class ReceivePackService {
             return GitResponse.error(HttpResponseStatus.FORBIDDEN, "push is disabled");
         }
         SpooledBuffer out = new SpooledBuffer(config.spoolMemoryLimit);
-        try (Repository repo = GitRepo.open(gitDir)) {
-            ReceivePack rp = new ReceivePack(repo);
-            rp.setBiDirectionalPipe(false);
-            rp.setTimeout(0);
-            rp.receive(in, out, null);
+        try {
+            com.black.ReceivePackService.receive(gitDir, in, out);
             Log.logger.info("receive-pack applied {} bytes response to {}", out.size(), gitDir);
             return GitResponse.ok("application/x-git-receive-pack-result", out);
-        } catch (PackProtocolException e) {
+        } catch (GitProtocolException e) {
             closeQuietly(out);
             Log.logger.warn("receive-pack protocol error {} : {}", gitDir, e.getMessage());
             return GitResponse.error(HttpResponseStatus.BAD_REQUEST, e.getMessage());
