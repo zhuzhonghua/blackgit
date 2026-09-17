@@ -104,26 +104,85 @@ class CloneCommand:
                             f'refs/remotes/origin/{branch}'], cwd=dest)
     run(['git', 'checkout', '-b', branch, f'origin/{branch}'], cwd=dest)
 
+class BranchCommand:
+  def __init__(self, blackw):
+    self.blackw = blackw
+    self.usage = "usage: git blackw branch"
+
+  def run(self, argv):
+    if len(argv) > 2:
+      raise Exception(f"{self.usage}")
+    bw = self.blackw
+    toplevel = bw._top()
+    heads = bw.git_output(['git', 'for-each-ref', '--format=%(refname)',
+                           'refs/heads'], cwd=toplevel).strip().splitlines()
+    remotes = bw.git_output(['git', 'for-each-ref', '--format=%(refname)',
+                             'refs/remotes'], cwd=toplevel).strip().splitlines()
+    heads = [h for h in heads if h]
+    remotes = [r for r in remotes if r]
+    try:
+      cur = bw.git_output(['git', 'symbolic-ref', '--short', '-q', 'HEAD'],
+                          cwd=toplevel).strip()
+    except Exception:
+      cur = ""
+    lines = []
+    for name in heads:
+      short = name[len("refs/heads/"):]
+      lines.append(f"* {short}" if short == cur else f"  {short}")
+    headref = "refs/remotes/origin/HEAD"
+    if headref in remotes:
+      remotes.remove(headref)
+      try:
+        target = bw.git_output(['git', 'symbolic-ref', headref],
+                               cwd=toplevel).strip()
+        lines.append(f"  {headref[len('refs/'):]} -> "
+                     f"{target[len('refs/remotes/'):]}")
+      except Exception:
+        pass
+    for name in remotes:
+      lines.append(f"  {name[len('refs/'):]}")
+    if not lines:
+      pout("(no branches)")
+      return
+    for line in lines:
+      pout(line)
+
 class LsCommand:
   def __init__(self, blackw):
     self.blackw = blackw
-    self.usage = "usage: git blackw ls [<dir>]"
+    self.usage = "usage: git blackw ls [<ref> | <path> | <branch>:<path>]"
 
   def run(self, argv):
     extra = argv[2:]
-    path = None
     if len(extra) > 1:
       raise Exception(f"{self.usage}")
     if extra and extra[0] in ("-h", "--help"):
       raise Exception(f"{self.usage}")
-    if extra:
-      path = extra[0]
+    arg = extra[0] if extra else None
     bw = self.blackw
     toplevel = bw._top()
-    if path is None:
+    if arg is None:
       bw.run_cmd(['git', 'ls-tree', 'HEAD'], cwd=toplevel)
       return
-    rel = bw.normalizerel(path)
+    if ":" in arg:
+      ref, rest = arg.split(":", 1)
+      ref = ref or "HEAD"
+      self._checkref(toplevel, ref)
+      target = f"{ref}:{rest}" if rest else ref
+      if rest:
+        otype = bw.git_output(['git', 'cat-file', '-t', target],
+                              cwd=toplevel).strip()
+        if otype != "tree":
+          raise Exception(f"not a dir {arg}\n{self.usage}")
+      bw.run_cmd(['git', 'ls-tree', target], cwd=toplevel)
+      return
+    try:
+      self._checkref(toplevel, arg)
+      bw.run_cmd(['git', 'ls-tree', arg], cwd=toplevel)
+      return
+    except Exception:
+      pass
+    rel = bw.normalizerel(arg)
     if rel != ".":
       otype = bw.git_output(['git', 'cat-file', '-t', f'HEAD:{rel}'],
                             cwd=toplevel).strip()
@@ -133,6 +192,10 @@ class LsCommand:
     else:
       bw.run_cmd(['git', 'ls-tree', 'HEAD'], cwd=toplevel)
 
+  def _checkref(self, toplevel, ref):
+    self.blackw.git_output(['git', 'rev-parse', '--verify', '--quiet', ref],
+                           cwd=toplevel)
+
 class BlackGitCli:
   def __init__(self):
     self.toplevel = None
@@ -141,6 +204,8 @@ class BlackGitCli:
     pout(f"blackw run {argv}")
     if argv[1] == "ls":
       LsCommand(self).run(argv)
+    elif argv[1] == "branch":
+      BranchCommand(self).run(argv)
     elif argv[1] == "clone":
       CloneCommand(self).run(argv)
     else:
