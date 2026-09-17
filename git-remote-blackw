@@ -5,7 +5,6 @@ import socket
 import struct
 import subprocess
 import tempfile
-import gitexternalblackw as gitblackw
 import blackgit
 
 type_map = {1: "commit", 2: "tree", 3: "blob", 4: "tag"}
@@ -209,10 +208,6 @@ class RemoteBlackW:
 def main():
   try:
     perr(f"argv={sys.argv}")
-    if sys.argv[0].endswith("git-blackw"):
-      blackw = gitblackw.ExternalBlackW()
-      blackw.run(sys.argv)
-    else:
       blackw = RemoteBlackW()
       blackw.run()
     return 0

@@ -8,10 +8,10 @@ from pathlib import Path
 import struct
 
 class Net:
-  def __init__(self):
+  def __init__(self, host="127.0.0.1", port=1666):
     self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    self.host = "127.0.0.1"
-    self.port = 1666
+    self.host = host
+    self.port = port
     self.initnet()
 
   def close(self):

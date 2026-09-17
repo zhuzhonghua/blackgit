@@ -1,1 +1,21 @@
-git-remote-blackw
+#!/usr/bin/env python3
+import sys
+import blackgitcli
+
+def perr(line):
+  sys.stderr.write(line)
+  if not line.endswith('\n'):
+    sys.stderr.write('\n')
+  sys.stderr.flush()
+
+def main():
+  try:
+    blackw = blackgitcli.BlackGitCli()
+    blackw.run(sys.argv)
+    return 0
+  except Exception as e:
+    perr(f"error: {e}")
+    return 1
+
+if __name__ == "__main__":
+  sys.exit(main())

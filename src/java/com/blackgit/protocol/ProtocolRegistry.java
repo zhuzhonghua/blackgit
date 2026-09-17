@@ -21,5 +21,7 @@ public class ProtocolRegistry {
         register(new ListProtocol());
         register(new FetchProtocol());
         register(new PushProtocol());
+        register(new TrimProtocol());
+        register(new UnapplyProtocol());
     }
 }

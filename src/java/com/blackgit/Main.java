@@ -11,6 +11,10 @@ public class Main {
             return;
         }
         BlackGit.bg = new BlackGit(args[0]);
-        new Server(1666);
+        int port = 1666;
+        if (args.length > 1) {
+            port = Integer.parseInt(args[1]);
+        }
+        new Server(port);
     }
 }
