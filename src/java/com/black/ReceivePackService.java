@@ -28,6 +28,8 @@ public final class ReceivePackService {
             throws Exception {
         Repository repo = GitRepo.open(gitDir); // shared, cached — do not close
             ReceivePack rp = new ReceivePack(repo);
+        rp.setAllowNonFastForwards(false); // reject --force / non-fast-forward pushes
+        rp.setAllowDeletes(false);         // reject ref deletion
             rp.setBiDirectionalPipe(false);
             rp.setTimeout(0);
             try {
