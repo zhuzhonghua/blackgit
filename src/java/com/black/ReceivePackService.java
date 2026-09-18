@@ -35,6 +35,7 @@ public final class ReceivePackService {
             rp.setTimeout(0);
             try {
                 rp.receive(in, out, null);
+            BlobAllowlist.invalidate(repo); // refs moved: drop stale blob allowlist cache
             } catch (PackProtocolException e) {
                 throw new GitProtocolException(e.getMessage(), e);
             }

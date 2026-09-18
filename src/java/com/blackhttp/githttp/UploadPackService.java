@@ -22,7 +22,7 @@ final class UploadPackService {
     GitResponse upload(InputStream in, boolean protocolV2, ShallowRequest shallow) {
         SpooledBuffer out = new SpooledBuffer(config.spoolMemoryLimit);
         try {
-            com.black.UploadPackService.upload(gitDir, in, out, protocolV2);
+            com.black.UploadPackService.upload(gitDir, in, out, protocolV2, config.blobAllow);
             Log.logger.info("upload-pack served {} bytes from {} v2={} {}",
                     out.size(), gitDir, protocolV2, shallow.summary());
             if (Log.logger.isDebugEnabled()) {

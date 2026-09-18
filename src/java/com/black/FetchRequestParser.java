@@ -36,6 +36,7 @@ public final class FetchRequestParser {
         String filterSpec = null;
         List<String> deepenNots = new ArrayList<>();
         List<ObjectId> shallows = new ArrayList<>();
+        List<ObjectId> wants = new ArrayList<>();
         final List<String> lines;
         try {
             lines = packetLines(in);
@@ -63,12 +64,20 @@ public final class FetchRequestParser {
                 filterSpec = line.substring(PACKET_FILTER.length()).trim();
             } else if (line.startsWith(PACKET_WANT)) {
                 wantCount++;
+                // "want <sha> [<capabilities>]" (v0/v1) or "want <sha>" (v2)
+                String rest = line.substring(PACKET_WANT.length()).trim();
+                String sha = rest.split("\\s+")[0];
+                try {
+                    wants.add(ObjectId.fromString(sha));
+                } catch (IllegalArgumentException e) {
+                    Log.logger.debug("ignoring malformed want line: {}", line);
+                }
             } else if (line.startsWith(PACKET_HAVE)) {
                 haveCount++;
             }
         }
         return new ShallowRequest(depth, deepenSince, deepenNots, shallows, protocolV2,
-                command, wantCount, haveCount, filterSpec, lines);
+                command, wantCount, haveCount, filterSpec, lines, wants);
     }
 
     private static int positiveInt(String line, String prefix) {

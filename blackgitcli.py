@@ -267,9 +267,11 @@ class AddCommand:
       if rel not in kept:
         kept.add(rel)
         added.append(rel)
+    bw.set_sparse(toplevel, kept)
     bw.write_add_set(toplevel, kept)
     if added:
-      pout(f"add: +{', '.join(added)} (now caring about {len(kept)} file(s))")
+      pout(f"add: +{', '.join(added)} (now caring about {len(kept)} file(s), "
+           f"view applied)")
     else:
       pout(f"add: already caring about all of: {', '.join(paths)}")
 
@@ -299,13 +301,15 @@ class AddCommand:
       if dirty:
         raise Exception(f"add -d: worktree has local changes, resolve them "
                         f"first (sparse-checkout cannot clean it):\n{dirty}")
-      bw.write_add_set(toplevel, kept)
       bw.set_sparse(toplevel, set())
+      bw.write_add_set(toplevel, kept)
       pout(f"add: -{', '.join(rels)} (nothing cared anymore, "
            f"sparse-checkout '!/* !/*/*' re-armed, empty worktree)")
     else:
+      bw.set_sparse(toplevel, kept)
       bw.write_add_set(toplevel, kept)
-      pout(f"add: -{', '.join(rels)} (now caring about {len(kept)} file(s))")
+      pout(f"add: -{', '.join(rels)} (now caring about {len(kept)} file(s), "
+           f"view applied)")
 
   def listpaths(self):
     bw = self.blackw
@@ -318,30 +322,67 @@ class AddCommand:
       pout(rel)
     pout(f"({len(kept)} file(s))")
 
-class CheckoutCommand:
+class PullCommand:
   def __init__(self, blackw):
     self.blackw = blackw
-    self.usage = "usage: git blackw checkout"
+    self.usage = "usage: git blackw pull"
 
   def run(self, argv):
     if len(argv) > 2:
       raise Exception(f"{self.usage}")
     bw = self.blackw
-    toplevel = bw._top()
-    paths = bw.read_add_set(toplevel)
-    if not paths:
-      raise Exception(f"nothing added yet; run: git blackw add <path>\n{self.usage}")
-    for rel in sorted(paths):
-      entry = bw.ls_entry(toplevel, "HEAD", rel)
-      if entry is None:
-        raise Exception(f"cared path not found in HEAD: {rel}\n"
-                        f"remove it from .git/{ADD_FILE} or re-add")
-      if entry[1] != "blob":
-        raise Exception(f"cared path is not a file: {rel} is {entry[1]}")
-    bw.set_sparse(toplevel, paths)
-    for rel in sorted(paths):
-      pout(f"released {rel}")
-    pout(f"checkout done: {len(paths)} file(s) in worktree (HEAD stays real)")
+    top = bw._top()
+    branch = self.current_branch(bw, top)
+    # 1. Fetch only the missing commit objects: filter=tree:0 brings commits
+    #    and nothing else. No historical tree/blob is downloaded here; any
+    #    tree/blob needed later is lazy-fetched on demand.
+    bw.run_cmd(["git", "fetch", "--filter=tree:0", "--no-tags", "origin"],
+               cwd=top)
+    local = bw.git_output(["git", "rev-parse", "HEAD"], cwd=top).strip()
+    remote = bw.git_output(["git", "rev-parse", "--verify",
+                            f"origin/{branch}"], cwd=top).strip()
+    if local == remote:
+      pout(f"pull: already up to date ({local[:8]})")
+      return
+    # 2. Only a fast-forward is handled here; a diverged history needs a real
+    #    merge/rebase, which the standard git flow covers.
+    mb = bw.git_output(["git", "merge-base", local, remote], cwd=top).strip()
+    if mb != local:
+      raise Exception("pull: local and remote have diverged — run standard "
+                      "'git pull' (merge/rebase) instead")
+    dirty = bw.git_output(["git", "status", "--porcelain"], cwd=top).strip()
+    if dirty:
+      raise Exception(f"pull: worktree has local changes, commit/stash them "
+                      f"first:\n{dirty}")
+    # 3. Move the branch, reset the index to the new tip, then re-apply the
+    #    cared-file view. read-tree lazy-fetches the new tip's trees (servers
+    #    always allow trees); sparse-checkout lazy-fetches the cared blobs
+    #    (servers allow only allowlisted paths). Historical blobs/trees stay
+    #    absent until explicitly needed.
+    #
+    #    After read-tree the old worktree file looks like a local edit (old
+    #    content vs new index), which sparse-checkout protects and will not
+    #    overwrite — so force-materialize the cared files with checkout-index
+    #    (safe: we verified the worktree was clean before read-tree).
+    bw.run_cmd(["git", "update-ref", f"refs/heads/{branch}", remote], cwd=top)
+    bw.run_cmd(["git", "read-tree", "HEAD"], cwd=top)
+    paths = bw.read_add_set(top)
+    bw.set_sparse(top, paths)
+    if paths:
+      bw.run_cmd(["git", "checkout-index", "-f", "--"] + sorted(paths),
+                 cwd=top)
+    pout(f"pull: {branch} {local[:8]} -> {remote[:8]} "
+         f"(commits only; trees/blobs on demand)")
+
+  def current_branch(self, bw, top):
+    try:
+      branch = bw.git_output(["git", "symbolic-ref", "--short", "-q", "HEAD"],
+                             cwd=top).strip()
+    except Exception:
+      branch = ""
+    if not branch:
+      raise Exception(f"pull: HEAD is detached; run on a branch\n{self.usage}")
+    return branch
 
 class BlackGitCli:
   def __init__(self):
@@ -357,8 +398,8 @@ class BlackGitCli:
       CloneCommand(self).run(argv)
     elif argv[1] == "add":
       AddCommand(self).run(argv)
-    elif argv[1] == "checkout":
-      CheckoutCommand(self).run(argv)
+    elif argv[1] == "pull":
+      PullCommand(self).run(argv)
     else:
       raise Exception(f"unsupport operation {argv[1]}")
 

@@ -12,7 +12,7 @@ import java.util.List;
  */
 public final class ShallowRequest {
     public static final ShallowRequest NONE =
-            new ShallowRequest(0, 0, List.of(), List.of(), false, null, 0, 0, null, List.of());
+            new ShallowRequest(0, 0, List.of(), List.of(), false, null, 0, 0, null, List.of(), List.of());
 
     /** Clone/fetch depth; {@code 0} means unbounded. */
     public final int depth;
@@ -34,10 +34,13 @@ public final class ShallowRequest {
     public final String filterSpec;
     /** All decoded pkt-line payloads of the request body (for debug logging). */
     public final List<String> requestLines;
+    /** The concrete object ids the client asked for ({@code want <sha>} lines). */
+    public final List<ObjectId> wants;
 
     public ShallowRequest(int depth, long deepenSince, List<String> deepenNots,
                    List<ObjectId> clientShallows, boolean protocolV2, String command,
-                   int wantCount, int haveCount, String filterSpec, List<String> requestLines) {
+                   int wantCount, int haveCount, String filterSpec, List<String> requestLines,
+                   List<ObjectId> wants) {
         this.depth = depth;
         this.deepenSince = deepenSince;
         this.deepenNots = List.copyOf(deepenNots);
@@ -48,6 +51,7 @@ public final class ShallowRequest {
         this.haveCount = haveCount;
         this.filterSpec = filterSpec;
         this.requestLines = List.copyOf(requestLines);
+        this.wants = List.copyOf(wants);
     }
 
     /** True if the client asked for a shallow (or deepening) fetch. */

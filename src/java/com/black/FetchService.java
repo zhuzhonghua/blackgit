@@ -31,7 +31,11 @@ public class FetchService {
         Set<RevObject> objects = new HashSet<>();
 
         Set<String> already = new HashSet<>();
-        boolean backfilled = false;
+        // Shas whose on-demand backfill has already been attempted, so a fetch
+        // that genuinely cannot be obtained from origin fails fast instead of
+        // looping. Backfill is per-sha (not a one-shot unshallow): the client
+        // asked for one sha, the server pulls only that sha from origin.
+        Set<String> backfilled = new HashSet<>();
         for (String sha : shaList) {
             if (already.contains(sha))
                 continue;
@@ -60,14 +64,14 @@ public class FetchService {
                     }
                     done = true;
                 } catch (MissingObjectException | IncorrectObjectTypeException e) {
-                    if (!backfilled && OriginBackfill.hasOrigin(repository)) {
-                        Log.logger.info("fetch backfill from origin for missing {}", id.name());
-                        try {
-                            OriginBackfill.fetchFromOrigin(repository);
-                        } catch (Exception ex) {
-                            Log.logger.warn("fetch backfill from origin failed: {}", ex.toString());
+                    // The requested object (or a tree/blob under it) is missing
+                    // locally. Pull just this sha from origin on demand rather
+                    // than unshallowing the whole cached repository.
+                    if (backfilled.add(id.name())) {
+                        Log.logger.info("on-demand backfill for missing {} from origin", id.name());
+                        if (!OriginBackfill.ensureSha(repository, id)) {
+                            throw e;
                         }
-                        backfilled = true;
                     } else {
                         throw e;
                     }
