@@ -208,8 +208,8 @@ class RemoteBlackW:
 def main():
   try:
     perr(f"argv={sys.argv}")
-      blackw = RemoteBlackW()
-      blackw.run()
+    blackw = RemoteBlackW()
+    blackw.run()
     return 0
   except Exception as e:
     perr(f"unexpected exception {e}")
