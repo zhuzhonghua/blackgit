@@ -149,8 +149,14 @@ public final class VirtualCommit {
         CommitBuilder cb = new CommitBuilder();
         cb.setTreeId(view);
         cb.setParentIds(c.getParents());
-        cb.setAuthor(new PersonIdent(c.getAuthorIdent()));
-        cb.setCommitter(new PersonIdent(c.getCommitterIdent()));
+        // NB: PersonIdent is immutable and CommitBuilder only reads it, so pass
+        // the parsed idents straight through. Do NOT use new PersonIdent(src):
+        // in JGit 6.10 that constructor copies only name/email and stamps the
+        // CURRENT time + local tz, which would make the virtual commit
+        // non-deterministic across recomputations (the cache only masks it
+        // within one process). The virtual commit must be byte-deterministic.
+        cb.setAuthor(c.getAuthorIdent());
+        cb.setCommitter(c.getCommitterIdent());
         cb.setEncoding(StandardCharsets.UTF_8);
         cb.setMessage(c.getFullMessage());
 
