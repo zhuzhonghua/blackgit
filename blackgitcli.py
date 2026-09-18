@@ -4,8 +4,6 @@ import os
 
 # Cared-file set (one repo-relative blob path per line, sorted, unique).
 ADD_FILE = "blackw-add.tsv"
-# Virtual-commit -> (real commit, path) map, same file blacktrim.py uses.
-TRIM_MAP_FILE = "blackw-trim-map.tsv"
 
 def pp(line, target):
   target.write(line)
@@ -250,7 +248,6 @@ class AddCommand:
       return
     bw = self.blackw
     toplevel = bw._top()
-    base = bw.find_real(toplevel)
     kept = bw.read_add_set(toplevel)
     added = []
     for p in paths:
@@ -259,9 +256,9 @@ class AddCommand:
         raise Exception(f"not a file {p}\n{self.usage}")
       if "\n" in rel or "\t" in rel:
         raise Exception(f"path with newline/tab is not supported: {p}")
-      entry = bw.ls_entry(toplevel, base, rel)
+      entry = bw.ls_entry(toplevel, "HEAD", rel)
       if entry is None:
-        raise Exception(f"no such path in {base}: {rel}\n"
+        raise Exception(f"no such path in HEAD: {rel}\n"
                         f"run 'git blackw ls' to see the tree")
       mode, typ, sha = entry
       if typ != "blob":
@@ -296,15 +293,14 @@ class AddCommand:
       kept.discard(r)
     if not kept:
       # Nothing cared anymore: re-arm the full-exclusion sparse rule so a
-      # later checkout can never materialize root files.
+      # later operation can never materialize root files.
       dirty = bw.git_output(["git", "status", "--porcelain"],
                             cwd=toplevel).strip()
       if dirty:
         raise Exception(f"add -d: worktree has local changes, resolve them "
                         f"first (sparse-checkout cannot clean it):\n{dirty}")
       bw.write_add_set(toplevel, kept)
-      bw.run_cmd(["git", "sparse-checkout", "set", "--no-cone",
-                  "!/*", "!/*/*"], cwd=toplevel)
+      bw.set_sparse(toplevel, set())
       pout(f"add: -{', '.join(rels)} (nothing cared anymore, "
            f"sparse-checkout '!/* !/*/*' re-armed, empty worktree)")
     else:
@@ -335,44 +331,17 @@ class CheckoutCommand:
     paths = bw.read_add_set(toplevel)
     if not paths:
       raise Exception(f"nothing added yet; run: git blackw add <path>\n{self.usage}")
-    base = bw.find_real(toplevel)
-    pout(f"checkout: real base={base}, caring about {len(paths)} file(s)")
-    entries = []
     for rel in sorted(paths):
-      entry = bw.ls_entry(toplevel, base, rel)
+      entry = bw.ls_entry(toplevel, "HEAD", rel)
       if entry is None:
-        raise Exception(f"cared path not found in {base}: {rel}\n"
+        raise Exception(f"cared path not found in HEAD: {rel}\n"
                         f"remove it from .git/{ADD_FILE} or re-add")
-      mode, typ, sha = entry
-      if typ != "blob":
-        raise Exception(f"cared path is not a file: {rel} is {typ}")
-      entries.append((rel, mode, sha))
-    dirty = bw.git_output(["git", "status", "--porcelain"],
-                          cwd=toplevel).strip()
-    if dirty:
-      raise Exception(f"checkout: worktree has local changes, "
-                      f"commit/stash first:\n{dirty}")
-    bw.ensure_blobs(toplevel, [sha for _, _, sha in entries])
-    root = bw.git_output(["git", "rev-parse", base + "^{tree}"],
-                         cwd=toplevel).strip()
-    newroot = bw.trim_tree(toplevel, root, "", set(paths))
-    vc = bw.build_virtual(toplevel, base, newroot)
-    head = bw.git_output(["git", "rev-parse", "HEAD"], cwd=toplevel).strip()
-    if vc == head:
-      pout("checkout: view unchanged")
-    else:
-      bw.record_trim_map(toplevel, vc, base, paths)
-      bw.run_cmd(["git", "update-ref", "--no-deref", "HEAD", vc], cwd=toplevel)
-      pout(f"checkout: pinned HEAD -> {vc}")
-    bw.run_cmd(["git", "read-tree", "HEAD"], cwd=toplevel)
-    bw.run_cmd(["git", "checkout-index", "-f", "-a"], cwd=toplevel)
-    try:
-      bw.run_cmd(["git", "sparse-checkout", "disable"], cwd=toplevel)
-    except Exception as e:
-      pout(f"checkout: sparse-checkout disable skipped ({e})")
-    for rel, _, sha in entries:
-      pout(f"released {rel} {sha}")
-    pout(f"checkout done: {len(entries)} file(s) in worktree, tree={newroot}")
+      if entry[1] != "blob":
+        raise Exception(f"cared path is not a file: {rel} is {entry[1]}")
+    bw.set_sparse(toplevel, paths)
+    for rel in sorted(paths):
+      pout(f"released {rel}")
+    pout(f"checkout done: {len(paths)} file(s) in worktree (HEAD stays real)")
 
 class BlackGitCli:
   def __init__(self):
@@ -405,9 +374,6 @@ class BlackGitCli:
   def add_file(self, top):
     return os.path.join(self.gitdir(top), ADD_FILE)
 
-  def trim_map_file(self, top):
-    return os.path.join(self.gitdir(top), TRIM_MAP_FILE)
-
   def read_add_set(self, top):
     f = self.add_file(top)
     if not os.path.isfile(f):
@@ -428,36 +394,18 @@ class BlackGitCli:
         fh.write(p + "\n")
     os.replace(tmp, f)
 
-  def find_real(self, top):
-    """Real commit behind the current HEAD: HEAD itself unless it is a
-    recorded virtual commit (vc -> real in the trim map)."""
-    head = self.git_output(["git", "rev-parse", "HEAD"], cwd=top).strip()
-    f = self.trim_map_file(top)
-    if os.path.isfile(f):
-      with open(f, encoding="utf-8") as fh:
-        for line in fh:
-          parts = line.rstrip("\n").split("\t")
-          if len(parts) >= 2 and parts[0] == head:
-            return parts[1]
-    return head
-
-  def record_trim_map(self, top, vc, real, paths):
-    """Append vc -> (real, path) lines (one per path), dedup, rewrite."""
-    f = self.trim_map_file(top)
-    existing = set()
-    if os.path.isfile(f):
-      with open(f, encoding="utf-8") as fh:
-        for line in fh:
-          line = line.rstrip("\n")
-          if line:
-            existing.add(line)
-    for p in sorted(paths):
-      existing.add(f"{vc}\t{real}\t{p}")
-    tmp = f + ".tmp"
-    with open(tmp, "w", encoding="utf-8") as fh:
-      for line in sorted(existing):
-        fh.write(line + "\n")
-    os.replace(tmp, f)
+  def set_sparse(self, top, paths):
+    """Apply the cared-file view with git's native sparse-checkout: HEAD and
+    the index stay real (commits/push/rebase all see the full tree); only the
+    cared blobs are materialized in the worktree. Whitelist rules, so files
+    added on the server later never leak into the view. paths empty -> exclude
+    everything."""
+    if not paths:
+      rules = ["!/*", "!/*/*"]
+    else:
+      rules = ["/" + p for p in sorted(paths)]
+    self.run_cmd(["git", "sparse-checkout", "set", "--no-cone"] + rules,
+                 cwd=top)
 
   def ls_entry(self, top, treeish, rel):
     """(mode, type, sha) of rel in treeish, or None. Paths are literal."""
@@ -475,233 +423,6 @@ class BlackGitCli:
         if len(parts) == 3:
           return (parts[0], parts[1], parts[2])
     return None
-
-  def git_bin(self, cmd, *arg, data=None, **args):
-    with subprocess.Popen(cmd,
-                          stdin=subprocess.PIPE if data is not None else None,
-                          stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                          *arg, **args) as p:
-      out, err = p.communicate(data)
-      if err:
-        perr(err.decode(errors="replace").strip())
-      if p.returncode != 0:
-        raise Exception(err.decode(errors="replace").strip() or f"cmd failed: {cmd}")
-      return out
-
-  def ls_tree_z(self, top, tree):
-    out = self.git_bin(["git", "ls-tree", "-z", tree], cwd=top)
-    entries = []
-    for raw in out.split(b"\0"):
-      if not raw:
-        continue
-      meta, _, name = raw.partition(b"\t")
-      parts = meta.split(b" ", 2)
-      if len(parts) != 3:
-        continue
-      entries.append((parts[0].decode(), parts[1].decode(),
-                      parts[2].decode(), name.decode("utf-8", "replace")))
-    return entries
-
-  def mktree(self, top, entries):
-    payload = b"".join(("%s %s %s\t%s" % (m, t, s, n)).encode("utf-8") + b"\0"
-                       for (m, t, s, n) in entries)
-    out = self.git_bin(["git", "mktree", "-z"], cwd=top, data=payload)
-    return out.decode().strip()
-
-  def trim_tree(self, top, tree, prefix, kept):
-    """Deterministic trim: keep only the kept blobs (and the directory chain
-    that leads to them); drop everything else. Returns None when nothing
-    survives (empty dirs are not created)."""
-    out = []
-    for (mode, typ, sha, name) in self.ls_tree_z(top, tree):
-      child = (prefix + "/" + name) if prefix else name
-      if typ == "blob":
-        if child in kept:
-          out.append((mode, "blob", sha, name))
-      elif typ == "tree":
-        new = self.trim_tree(top, sha, child, kept)
-        if new:
-          out.append(("040000", "tree", new, name))
-    if not out:
-      return None
-    return self.mktree(top, out)
-
-  def _object_present(self, top, sha):
-    env = dict(os.environ)
-    env["GIT_NO_LAZY_FETCH"] = "1"
-    p = subprocess.run(["git", "-C", top, "cat-file", "-e", sha],
-                       stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
-                       env=env)
-    return p.returncode == 0
-
-  def _commit_parents(self, top, sha):
-    raw = self.git_bin(["git", "cat-file", "commit", sha], cwd=top)
-    idx = raw.find(b"\n\n")
-    if idx < 0:
-      return None
-    parents = []
-    for h in raw[:idx].split(b"\n"):
-      if h.startswith(b"parent "):
-        parents.append(h[7:].decode())
-    return parents
-
-  def deepen_commits(self, top, shas):
-    """Extend the shallow boundary forward by one layer: fetch only the
-    missing parent *commit* objects (filter=tree:0 -> no trees, no blobs),
-    then rewrite .git/shallow so git can walk the fetched commits and stop
-    at the new boundary."""
-    uniq = list(dict.fromkeys(shas))
-    pout(f"checkout: deepening history, fetching commits {uniq}")
-    self.run_cmd(["git", "fetch", "--no-tags", "--filter=tree:0", "--depth=1",
-                  "origin"] + uniq, cwd=top)
-    self._refresh_shallow(top, newly_fetched=uniq)
-
-  def _refresh_shallow(self, top, newly_fetched=()):
-    """Boundary bookkeeping: commits whose parents are all present locally
-    no longer need to be shallow boundaries (drop them); fetched commits
-    whose parents are still missing become the new boundaries (keep/add)."""
-    f = os.path.join(self.gitdir(top), "shallow")
-    entries = []
-    if os.path.isfile(f):
-      with open(f, encoding="utf-8") as fh:
-        entries = [l.strip() for l in fh if l.strip()]
-    present = set(entries) | set(newly_fetched)
-    keep = []
-    for b in sorted(present):
-      parents = self._commit_parents(top, b)
-      if parents is None:
-        keep.append(b)
-        continue
-      if any(not self._object_present(top, p) for p in parents):
-        keep.append(b)
-      else:
-        pout(f"checkout: shallow boundary {b} no longer needed "
-             f"(parents present)")
-    if keep != entries:
-      tmp = f + ".tmp"
-      with open(tmp, "w", encoding="utf-8") as fh:
-        for b in keep:
-          fh.write(b + "\n")
-      os.replace(tmp, f)
-    pout(f"checkout: shallow boundary now {keep}")
-
-  def build_virtual(self, top, src, tree):
-    """Deterministic virtual commit: same author/committer/message as src,
-    trimmed tree. Parents: copied from src. If a parent is missing locally,
-    fetch just that commit from the server (deepen by one layer, updating
-    .git/shallow) so git log can walk the real history; only if the fetch
-    fails does the view commit fall back to a root."""
-    raw = self.git_bin(["git", "cat-file", "commit", src], cwd=top)
-    idx = raw.find(b"\n\n")
-    if idx < 0:
-      raise Exception(f"malformed commit {src}")
-    parents = []
-    author = None
-    committer = None
-    enc = None
-    for h in raw[:idx].split(b"\n"):
-      if h.startswith(b"parent "):
-        parents.append(h[7:].decode())
-      elif h.startswith(b"author "):
-        author = h[7:]
-      elif h.startswith(b"committer "):
-        committer = h[10:]
-      elif h.startswith(b"encoding "):
-        enc = h[9:].decode("ascii", "replace")
-    msg = raw[idx + 2:]
-    if enc and enc.lower() not in ("utf-8", "utf8"):
-      msg = msg.decode(enc, errors="replace").encode("utf-8")
-    if parents:
-      missing = [pr for pr in parents if not self._object_present(top, pr)]
-      if missing:
-        try:
-          self.deepen_commits(top, missing)
-        except Exception as e:
-          pout(f"checkout: could not deepen history ({e}); "
-               f"view commit becomes a root")
-          parents = []
-        else:
-          still = [pr for pr in parents if not self._object_present(top, pr)]
-          if still:
-            pout(f"checkout: parents still missing {still}; "
-                 f"view commit becomes a root")
-            parents = []
-    out = b"tree " + tree.encode() + b"\n"
-    for pr in parents:
-      out += b"parent " + pr.encode() + b"\n"
-    out += b"author " + author + b"\n"
-    out += b"committer " + committer + b"\n"
-    out += b"\n" + msg
-    return self.git_bin(["git", "hash-object", "-t", "commit", "-w", "--stdin"],
-                        cwd=top, data=out).decode().strip()
-
-  def _net_for_origin(self, top):
-    """blackgit.Net endpoint for the origin remote; defaults to 127.0.0.1:1666."""
-    import re as _re
-    try:
-      url = self.git_output(["git", "remote", "get-url", "origin"],
-                            cwd=top).strip()
-    except Exception:
-      url = ""
-    import blackgit as _blackgit
-    host = None
-    port = None
-    m = _re.match(r"blackw::([^:/]+):(\d+)", url)
-    if m:
-      host, port = m.group(1), int(m.group(2))
-    else:
-      m = _re.match(r"https?://([^/]+)/", url)
-      if m:
-        hp = m.group(1)
-        if "@" in hp:
-          hp = hp.rsplit("@", 1)[1]
-        if ":" in hp:
-          h, p = hp.rsplit(":", 1)
-          if p.isdigit():
-            host, port = h, int(p)
-    if host is None:
-      return _blackgit.Net()
-    return _blackgit.Net(host, port)
-
-  def ensure_blobs(self, top, shas):
-    """Make sure every blob sha exists locally. cat-file -e first (in a
-    promisor repo git lazy-fetches on its own); the rest are fetched over the
-    blackgit wire protocol (index-pack --promisor) as a fallback."""
-    missing = []
-    for s in dict.fromkeys(shas):
-      p = subprocess.run(["git", "-C", top, "cat-file", "-e", s],
-                         stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
-      if p.returncode != 0:
-        missing.append(s)
-    if not missing:
-      return
-    pout(f"checkout: fetching {len(missing)} missing blob(s) from server")
-    import blackgit as _blackgit
-    net = self._net_for_origin(top)
-    try:
-      pack = net.call("fetch", "\n".join(missing).encode("utf-8"))
-    except Exception as e:
-      raise Exception(f"checkout: cannot fetch blobs from server: {e}")
-    finally:
-      try:
-        net.close()
-      except Exception:
-        pass
-    if pack:
-      p = subprocess.Popen(["git", "-C", top, "index-pack", "--stdin", "--promisor"],
-                           stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                           stderr=subprocess.PIPE)
-      _, err = p.communicate(pack)
-      if p.returncode != 0:
-        raise Exception(f"checkout: server returned no usable blob pack: "
-                        f"{err.decode(errors='replace').strip()}")
-    still = [s for s in missing
-             if subprocess.run(["git", "-C", top, "cat-file", "-e", s],
-                               stdout=subprocess.DEVNULL,
-                               stderr=subprocess.DEVNULL).returncode != 0]
-    if still:
-      raise Exception(f"checkout: still missing {len(still)} blob(s) after "
-                      f"fetch: {still[:5]}")
 
   def normalizerel(self, p):
     if p in (".", "./", ""):
