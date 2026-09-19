@@ -356,10 +356,10 @@ class FollowCommand:
       pout(rel)
     pout(f"({len(kept)} file(s))")
 
-class PullCommand:
+class UpdateCommand:
   def __init__(self, blackw):
     self.blackw = blackw
-    self.usage = "usage: git blackw pull"
+    self.usage = "usage: git blackw update"
 
   def run(self, argv):
     if len(argv) > 2:
@@ -377,17 +377,17 @@ class PullCommand:
     remote = bw.git_output(["git", "rev-parse", "--verify",
                             f"origin/{branch}"], cwd=top).strip()
     if local == remote:
-      pout(f"pull: already up to date ({local[:8]})")
+      pout(f"update: already up to date ({local[:8]})")
       return
     # 2. Only a fast-forward is handled here; a diverged history needs a real
     #    merge/rebase, which the standard git flow covers.
     mb = bw.git_output(["git", "merge-base", local, remote], cwd=top).strip()
     if mb != local:
-      raise Exception("pull: local and remote have diverged — run standard "
+      raise Exception("update: local and remote have diverged — run standard "
                       "'git pull' (merge/rebase) instead")
     dirty = bw.git_output(["git", "status", "--porcelain"], cwd=top).strip()
     if dirty:
-      raise Exception(f"pull: worktree has local changes, commit/stash them "
+      raise Exception(f"update: worktree has local changes, commit/stash them "
                       f"first:\n{dirty}")
     # 3. Move the branch, reset the index to the new tip, then re-apply the
     #    cared-file view. read-tree lazy-fetches the new tip's trees (servers
@@ -406,7 +406,7 @@ class PullCommand:
     if paths:
       bw.run_cmd(["git", "checkout-index", "-f", "--"] + sorted(paths),
                  cwd=top)
-    pout(f"pull: {branch} {local[:8]} -> {remote[:8]} "
+    pout(f"update: {branch} {local[:8]} -> {remote[:8]} "
          f"(commits only; trees/blobs on demand)")
 
   def current_branch(self, bw, top):
@@ -416,7 +416,7 @@ class PullCommand:
     except Exception:
       branch = ""
     if not branch:
-      raise Exception(f"pull: HEAD is detached; run on a branch\n{self.usage}")
+      raise Exception(f"update: HEAD is detached; run on a branch\n{self.usage}")
     return branch
 
 class BlackGitCli:
@@ -434,8 +434,8 @@ class BlackGitCli:
       CloneCommand(self).run(argv)
     elif cmd == "follow":
       FollowCommand(self).run(argv)
-    elif cmd == "pull":
-      PullCommand(self).run(argv)
+    elif cmd == "update":
+      UpdateCommand(self).run(argv)
     else:
       # Everything blackw does not override (push, status, log, ...) is handed
       # straight to stock git as `git <args...>`. execvp replaces this process,
