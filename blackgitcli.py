@@ -31,11 +31,9 @@ class CloneCommand:
     run = self.blackw.run_cmd
     run(['git', 'init', '.'], cwd=dest)
     run(['git', 'remote', 'add', 'origin', url], cwd=dest)
-    # Remember who we are so the cared-file list (blackw-add-<user>.tsv) is
-    # per-user even when several people share a working copy.
-    user = self.user_from_url(url)
-    if user:
-        run(['git', 'config', '--local', 'blackw.user', user], cwd=dest)
+    # Auth is left entirely to git's standard HTTP layer (credential helper,
+    # http.extraHeader, system keychain, ...). blackw never parses user info
+    # out of the URL, so the token never ends up embedded in remote.origin.url.
     self.partialclone(dest)
     branch = self.defaultbranch(dest)
     self.fetch(dest)
@@ -53,14 +51,6 @@ class CloneCommand:
     p.add_argument("dest", nargs="?")
     ns = p.parse_args(argv[2:])
     return ns.url, ns.dest
-
-  def user_from_url(self, url):
-    """Extract the username from https://user:token@host/x.git (empty if none)."""
-    from urllib.parse import urlparse
-    try:
-        return urlparse(url).username or ""
-    except Exception:
-        return ""
 
   def checkurl(self, url):
     if not url.startswith("https://") and not url.startswith("http://"):
@@ -377,8 +367,9 @@ class PullCommand:
     top = bw._top()
     branch = self.current_branch(bw, top)
     # 1. Fetch only the missing commit objects: filter=tree:0 brings commits
-    #    and nothing else. No historical tree/blob is downloaded here; any
-    #    tree/blob needed later is lazy-fetched on demand.
+    #    and nothing else. After a long gap a plain `git pull` would walk the
+    #    whole tree history and materialize blobs; this keeps the pull cheap.
+    #    Any tree/blob needed later is lazy-fetched on demand.
     bw.run_cmd(["git", "fetch", "--filter=tree:0", "--no-tags", "origin"],
                cwd=top)
     local = bw.git_output(["git", "rev-parse", "HEAD"], cwd=top).strip()
@@ -433,18 +424,24 @@ class BlackGitCli:
 
   def run(self, argv):
     pout(f"blackw run {argv}")
-    if argv[1] == "ls":
+    cmd = argv[1] if len(argv) > 1 else ""
+    if cmd == "ls":
       LsCommand(self).run(argv)
-    elif argv[1] == "branch":
+    elif cmd == "branch":
       BranchCommand(self).run(argv)
-    elif argv[1] == "clone":
+    elif cmd == "clone":
       CloneCommand(self).run(argv)
-    elif argv[1] == "add":
+    elif cmd == "add":
       AddCommand(self).run(argv)
-    elif argv[1] == "pull":
+    elif cmd == "pull":
       PullCommand(self).run(argv)
     else:
-      raise Exception(f"unsupport operation {argv[1]}")
+      # Everything blackw does not override (push, status, log, ...) is handed
+      # straight to stock git as `git <args...>`. execvp replaces this process,
+      # so stdin/stdout/stderr and the exit code pass through unchanged —
+      # interactive flows (password prompts, merge editor, ...) keep working
+      # exactly as with git itself.
+      os.execvp("git", ["git"] + argv[1:])
 
   def _top(self):
     if self.toplevel is None:
@@ -456,15 +453,9 @@ class BlackGitCli:
                            cwd=top).strip()
 
   def add_file(self, top):
-    user = self.current_user(top)
-    name = f"blackw-add-{user}.tsv" if user else ADD_FILE
-    return os.path.join(self.gitdir(top), name)
-
-  def current_user(self, top):
-    try:
-      return self.git_output(["git", "config", "blackw.user"], cwd=top).strip()
-    except Exception:
-      return ""
+    # The cared-file set lives in the repo's gitdir. Auth is handled by git's
+    # standard HTTP layer, so there is no per-user suffix here.
+    return os.path.join(self.gitdir(top), ADD_FILE)
 
   def read_add_set(self, top):
     f = self.add_file(top)
