@@ -31,6 +31,8 @@ final class Server {
 
     Server(Config config) throws Exception {
         this.config = config;
+        // Auto-create the local bare repo from --upstream (if given).
+        new RepoBootstrapper(config).bootstrap();
         this.repoResolver = new RepoResolver(new File(config.repoBase, "").getAbsoluteFile());
         this.boss = new NioEventLoopGroup(1, daemonThreads("blackgit-boss"));
         this.worker = new NioEventLoopGroup(0, daemonThreads("blackgit-netty"));

@@ -16,4 +16,7 @@ public final class Config {
     public int spoolMemoryLimit = 1 * 1024 * 1024;
     /** Extra I/O threads for git CPU work; 0 means Netty default. */
     public int httpThreads;
+    /** Upstream repository URL (http(s) only). When set, the local bare repo
+     *  is auto-created on startup with origin pointing here. */
+    public String upstreamUrl;
 }

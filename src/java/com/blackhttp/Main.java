@@ -33,6 +33,14 @@ public final class Main {
                 case "--http-threads" -> config.httpThreads = Integer.parseInt(require(arg, value(args, ++i)));
                 case "--read-only" -> config.readOnly = true;
                 case "--tls" -> config.tls = true;
+                case "--upstream" -> {
+                    String url = require(arg, value(args, ++i));
+                    if (!url.startsWith("http://") && !url.startsWith("https://")) {
+                        throw new IllegalArgumentException(
+                                "--upstream must be http:// or https://, got: " + url);
+                    }
+                    config.upstreamUrl = url;
+                }
                 case "--help", "-h" -> {
                     usage();
                     System.exit(0);
@@ -82,6 +90,8 @@ public final class Main {
                   --key-password <p>      key password
                   --spool-memory <bytes>  in-memory buffer before spooling to disk (default 1M)
                   --http-threads <n>      worker threads for git processing
+                  --upstream <url>        upstream git URL (http(s) only); auto-creates
+                                          the local bare repo and fetches HEAD on startup
                 """);
     }
 }

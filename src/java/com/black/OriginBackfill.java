@@ -10,6 +10,7 @@ import org.eclipse.jgit.lib.Repository;
 import org.eclipse.jgit.transport.RefSpec;
 import org.eclipse.jgit.transport.UsernamePasswordCredentialsProvider;
 
+import java.util.Collection;
 import java.util.List;
 
 /**
@@ -48,7 +49,10 @@ public class OriginBackfill {
             throws Exception {
         Log.logger.info("ref backfill from origin for repo {}",
                 repository.getDirectory());
-        var fetch = new Git(repository).fetch().setRemote("origin");
+        var fetch = new Git(repository).fetch().setRemote("origin")
+            .setRefSpecs(
+                new RefSpec("+refs/heads/*:refs/heads/*"),
+                new RefSpec("+refs/tags/*:refs/tags/*"));
         UsernamePasswordCredentialsProvider cp = credentials(authz);
         if (cp != null) {
             fetch.setCredentialsProvider(cp);
@@ -68,7 +72,9 @@ public class OriginBackfill {
                 repository.getDirectory());
         var fetch = new Git(repository).fetch()
                 .setRemote("origin")
-                .setRefSpecs(new RefSpec("+refs/heads/*:refs/heads/*"));
+                .setRefSpecs(
+                    new RefSpec("+refs/heads/*:refs/heads/*"),
+                    new RefSpec("+refs/tags/*:refs/tags/*"));
         UsernamePasswordCredentialsProvider cp = credentials(authz);
         if (cp != null) {
             fetch.setCredentialsProvider(cp);
@@ -93,15 +99,72 @@ public class OriginBackfill {
                     repository.getDirectory());
             var fetch = new Git(repository).fetch()
                     .setRemote("origin")
-                    .setRefSpecs(new RefSpec("+refs/heads/*:refs/heads/*"));
+                    .setRefSpecs(
+                        new RefSpec("+refs/heads/*:refs/heads/*"),
+                        new RefSpec("+refs/tags/*:refs/tags/*"));
             UsernamePasswordCredentialsProvider cp = credentials(authz);
             if (cp != null) {
                 fetch.setCredentialsProvider(cp);
             }
             fetch.call();
+            fixHeadSymref(repository, authz);
         } catch (Exception e) {
             Log.logger.warn("sync heads from origin failed ({}), serving local cache refs",
                     e.toString());
+        }
+    }
+
+    /**
+     * If the local HEAD symref points to a branch that does not exist (e.g. a
+     * fresh bare repo defaulted to refs/heads/master but upstream uses main),
+     * resolve upstream's HEAD symref and repoint local HEAD to it. Best-effort.
+     */
+    private static void fixHeadSymref(Repository repository, String authz) {
+        try {
+            Ref head = repository.exactRef("HEAD");
+            if (head == null || !head.isSymbolic()) {
+                return;
+            }
+            String target = head.getTarget().getName();
+            if (repository.exactRef(target) != null) {
+                return; // HEAD already points to an existing branch
+            }
+            // HEAD points to a nonexistent branch — ask upstream for its default.
+            String origin = repository.getConfig().getString("remote", "origin", "url");
+            if (origin == null || origin.isEmpty()) {
+                return;
+            }
+            // Use JGit ls-remote to get HEAD symref.
+            var ls = new Git(repository).lsRemote().setRemote(origin);
+            UsernamePasswordCredentialsProvider cp = credentials(authz);
+            if (cp != null) {
+                ls.setCredentialsProvider(cp);
+            }
+            Collection<Ref> refs = ls.call();
+            String upstreamHead = null;
+            for (Ref r : refs) {
+                if ("HEAD".equals(r.getName()) && r.isSymbolic()) {
+                    upstreamHead = r.getTarget().getName();
+                    break;
+                }
+            }
+            if (upstreamHead == null || repository.exactRef(upstreamHead) == null) {
+                // Fall back: first existing branch.
+                for (Ref r : refs) {
+                    if (r.getName().startsWith("refs/heads/") && repository.exactRef(r.getName()) != null) {
+                        upstreamHead = r.getName();
+                        break;
+                    }
+                }
+            }
+            if (upstreamHead != null) {
+                RefUpdate ru = repository.updateRef("HEAD");
+                ru.setRefLogMessage("bootstrap: repoint HEAD to " + upstreamHead, false);
+                ru.link(upstreamHead);
+                Log.logger.info("HEAD symref repointed {} -> {}", target, upstreamHead);
+            }
+        } catch (Exception e) {
+            Log.logger.warn("fix HEAD symref failed ({}), leaving as-is", e.toString());
         }
     }
 
