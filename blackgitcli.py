@@ -184,8 +184,10 @@ class LsCommand:
     arg = extra[0] if extra else None
     bw = self.blackw
     toplevel = bw._top()
+    allowed = self._fetch_allowed(toplevel)
     if arg is None:
-      bw.run_cmd(['git', 'ls-tree', 'HEAD'], cwd=toplevel)
+      out = bw.git_output(['git', 'ls-tree', 'HEAD'], cwd=toplevel)
+      self._print_filtered(out, allowed, '')
       return
     if ":" in arg:
       ref, rest = arg.split(":", 1)
@@ -197,11 +199,13 @@ class LsCommand:
                               cwd=toplevel).strip()
         if otype != "tree":
           raise Exception(f"not a dir {arg}\n{self.usage}")
-      bw.run_cmd(['git', 'ls-tree', target], cwd=toplevel)
+      out = bw.git_output(['git', 'ls-tree', target], cwd=toplevel)
+      self._print_filtered(out, allowed, rest)
       return
     try:
       self._checkref(toplevel, arg)
-      bw.run_cmd(['git', 'ls-tree', arg], cwd=toplevel)
+      out = bw.git_output(['git', 'ls-tree', arg], cwd=toplevel)
+      self._print_filtered(out, allowed, '')
       return
     except Exception:
       pass
@@ -211,9 +215,72 @@ class LsCommand:
                             cwd=toplevel).strip()
       if otype != "tree":
         raise Exception(f"not a dir {rel}\n{self.usage}")
-      bw.run_cmd(['git', 'ls-tree', f'HEAD:{rel}'], cwd=toplevel)
+      out = bw.git_output(['git', 'ls-tree', f'HEAD:{rel}'], cwd=toplevel)
+      self._print_filtered(out, allowed, rel)
     else:
-      bw.run_cmd(['git', 'ls-tree', 'HEAD'], cwd=toplevel)
+      out = bw.git_output(['git', 'ls-tree', 'HEAD'], cwd=toplevel)
+      self._print_filtered(out, allowed, '')
+
+  def _fetch_allowed(self, toplevel):
+    """GET /authz -> list of readable path prefixes, or None (= all)."""
+    import urllib.request, json, urllib.parse
+    url = self.blackw.git_output(
+        ["git", "remote", "get-url", "origin"], cwd=toplevel).strip()
+    api = url.rstrip("/") + "/authz"
+    parsed = urllib.parse.urlparse(url)
+    netloc = parsed.netloc
+    if "@" in netloc:
+      netloc = netloc.split("@", 1)[1]
+    inp = (f"protocol={parsed.scheme}\nhost={netloc}\n\n")
+    out = self.blackw.git_output(["git", "credential", "fill"],
+                                  cwd=toplevel, input=inp)
+    creds = {}
+    for line in out.splitlines():
+      if "=" in line:
+        k, v = line.split("=", 1)
+        creds[k] = v
+    import base64
+    raw = creds.get("username", "") + ":" + creds.get("password", "")
+    auth = "Basic " + base64.b64encode(raw.encode()).decode()
+    req = urllib.request.Request(api, headers={"Authorization": auth})
+    try:
+      with urllib.request.urlopen(req, timeout=10) as resp:
+        data = json.loads(resp.read())
+      read = data.get("read", [])
+      if "**" in read:
+        return None  # everything readable
+      return read
+    except Exception as e:
+      pout(f"ls: cannot fetch authz ({e}); showing all (no filter)")
+      return None
+
+  def _visible(self, path, allowed):
+    """An entry is visible if it is itself under an allowed prefix, or its
+    subtree contains an allowed prefix (so the user can navigate down)."""
+    if allowed is None:
+      return True
+    norm = path.strip("/")
+    for prefix in allowed:
+      p = prefix.strip("/")
+      if norm == p:
+        return True
+      if norm.startswith(p + "/"):
+        return True  # entry under allowed dir
+      if p.startswith(norm + "/"):
+        return True  # entry is a parent dir of an allowed path
+    return False
+
+  def _print_filtered(self, ls_tree_output, allowed, prefix=""):
+    for line in ls_tree_output.splitlines():
+      if "\t" not in line:
+        continue
+      meta, _, name = line.partition("\t")
+      parts = meta.split()
+      if len(parts) < 3:
+        continue
+      full = (prefix + "/" + name).strip("/") if prefix else name
+      if self._visible(full, allowed):
+        print(line)
 
   def _checkref(self, toplevel, ref):
     self.blackw.git_output(['git', 'rev-parse', '--verify', '--quiet', ref],
@@ -658,7 +725,9 @@ class BlackGitCli:
   def git_output(self, cmd, *arg, **args):
     pout(f"{cmd}")
     inp = args.pop("input", None)
+    stdin_arg = subprocess.PIPE if inp is not None else None
     with subprocess.Popen(cmd,
+                          stdin=stdin_arg,
                           stdout=subprocess.PIPE,
                           stderr=subprocess.PIPE,
                           text=True,

@@ -36,6 +36,7 @@ import static io.netty.handler.codec.http.HttpHeaderNames.CONTENT_TYPE;
 import static io.netty.handler.codec.http.HttpHeaderNames.HOST;
 import static io.netty.handler.codec.http.HttpHeaderValues.CLOSE;
 import io.netty.handler.codec.http.HttpResponseStatus;
+import org.eclipse.jgit.lib.Repository;
 import static io.netty.handler.codec.http.HttpResponseStatus.BAD_REQUEST;
 import static io.netty.handler.codec.http.HttpResponseStatus.CONFLICT;
 import static io.netty.handler.codec.http.HttpResponseStatus.FORBIDDEN;
@@ -129,10 +130,11 @@ public final class GitHttpHandler extends ChannelInboundHandlerAdapter {
         boolean isUploadPack = "git-upload-pack".equals(endpoint);
         boolean isReceivePack = "git-receive-pack".equals(endpoint);
         boolean isLock = "lock".equals(endpoint);
+        boolean isAuthz = "authz".equals(endpoint);
 
         // Only smart-git endpoints and the lock API require authentication;
         // unknown paths just 404.
-        if (!((isGet && (isInfoRefs || isLock))
+        if (!((isGet && (isInfoRefs || isLock || isAuthz))
                 || (isPost && (isUploadPack || isReceivePack || isLock))
                 || (isDelete && isLock))) {
             writeResponse(ctx, GitResponse.error(NOT_FOUND, "not found"));
@@ -217,6 +219,33 @@ public final class GitHttpHandler extends ChannelInboundHandlerAdapter {
             }
         }
         // --- end lock API ---
+
+        // --- Authz API: GET <repo>/authz -> readable path prefixes ---
+        if (isAuthz && isGet) {
+            try {
+                Repository repo = com.black.GitRepo.open(dir);
+                List<String> paths = com.black.RepoAuthz.allowedReadPaths(repo, user);
+                StringBuilder sb = new StringBuilder("{");
+                sb.append("\"user\":\"").append(user).append("\",");
+                sb.append("\"read\":[");
+                if (paths != null) {
+                    for (int i = 0; i < paths.size(); i++) {
+                        if (i > 0) sb.append(",");
+                        sb.append("\"").append(paths.get(i)).append("\"");
+                    }
+                } else {
+                    sb.append("\"**\""); // no authz file = everything readable
+                }
+                sb.append("]}");
+                writeResponse(ctx, GitResponse.raw(
+                        HttpResponseStatus.OK, "application/json",
+                        sb.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8)));
+            } catch (Exception e) {
+                writeResponse(ctx, GitResponse.error(INTERNAL_SERVER_ERROR, e.toString()));
+            }
+            return;
+        }
+        // --- end authz API ---
 
         if (isGet) {
                 bodyless = HttpMethod.HEAD.name().equals(method);
