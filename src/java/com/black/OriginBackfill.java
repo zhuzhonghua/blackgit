@@ -8,6 +8,7 @@ import org.eclipse.jgit.lib.Ref;
 import org.eclipse.jgit.lib.RefUpdate;
 import org.eclipse.jgit.lib.Repository;
 import org.eclipse.jgit.transport.RefSpec;
+import org.eclipse.jgit.transport.UsernamePasswordCredentialsProvider;
 
 import java.util.List;
 
@@ -43,10 +44,16 @@ public class OriginBackfill {
      * demand by {@link #ensureSha(Repository, ObjectId)} instead of by this
      * method. Deliberately never calls {@code setUnshallow(true)}.
      */
-    public static void fetchFromOrigin(Repository repository) throws Exception {
+    public static void fetchFromOrigin(Repository repository, String authz)
+            throws Exception {
         Log.logger.info("ref backfill from origin for repo {}",
                 repository.getDirectory());
-        new Git(repository).fetch().setRemote("origin").call();
+        var fetch = new Git(repository).fetch().setRemote("origin");
+        UsernamePasswordCredentialsProvider cp = credentials(authz);
+        if (cp != null) {
+            fetch.setCredentialsProvider(cp);
+        }
+        fetch.call();
     }
 
     /**
@@ -60,10 +67,17 @@ public class OriginBackfill {
      * throwaway ref under {@link #ON_DEMAND_REF_PREFIX} anchors the fetched
      * objects for the duration of the fetch and is removed afterwards.
      *
+     * @param repository the local cache
+     * @param wanted     the object id the client asked for
+     * @param authz      the client's raw {@code Authorization: Basic} header,
+     *                   forwarded to origin so upstream authenticates as the same
+     *                   user that contacted blackgit; null when no credentials
+     *                   should be injected (origin then uses the repo's stored
+     *                   credentials if any)
      * @return true when the object was already present or was successfully
      *         fetched; false when there is no origin or the fetch failed
      */
-    public static boolean ensureSha(Repository repository, ObjectId wanted) {
+    public static boolean ensureSha(Repository repository, ObjectId wanted, String authz) {
         if (hasObject(repository, wanted)) {
             return true;
         }
@@ -77,10 +91,14 @@ public class OriginBackfill {
             Log.logger.info("on-demand fetch sha {} from origin for {}",
                     wanted.name(), repository.getDirectory());
             RefSpec spec = new RefSpec("+" + wanted.name() + ":" + tmpRef);
-            new Git(repository).fetch()
+            var fetch = new Git(repository).fetch()
                     .setRemote("origin")
-                    .setRefSpecs(spec)
-                    .call();
+                    .setRefSpecs(spec);
+            UsernamePasswordCredentialsProvider cp = credentials(authz);
+            if (cp != null) {
+                fetch.setCredentialsProvider(cp);
+            }
+            fetch.call();
             return hasObject(repository, wanted);
         } catch (Exception e) {
             Log.logger.warn("on-demand fetch sha {} from origin failed: {}",
@@ -88,6 +106,34 @@ public class OriginBackfill {
             return false;
         } finally {
             deleteQuietly(repository, tmpRef);
+        }
+    }
+
+    /**
+     * Builds JGit credentials from the client's raw Authorization: Basic header,
+     * so an on-demand origin fetch authenticates as the same user that talked to
+     * blackgit. Returns null when the header is absent or malformed, in which
+     * case JGit falls back to the repository's own stored origin credentials.
+     */
+    private static UsernamePasswordCredentialsProvider credentials(String authz) {
+        if (authz == null) {
+            return null;
+        }
+        if (!authz.regionMatches(true, 0, "Basic ", 0, 6)) {
+            return null;
+        }
+        try {
+            String decoded = new String(java.util.Base64.getDecoder()
+                    .decode(authz.substring(6).trim()),
+                    java.nio.charset.StandardCharsets.UTF_8);
+            int colon = decoded.indexOf(':');
+            if (colon <= 0) {
+                return null;
+            }
+            return new UsernamePasswordCredentialsProvider(
+                    decoded.substring(0, colon), decoded.substring(colon + 1));
+        } catch (IllegalArgumentException e) {
+            return null;
         }
     }
 

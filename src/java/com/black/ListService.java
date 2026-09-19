@@ -16,7 +16,7 @@ public class ListService {
         Map<String, String> branchCommitMap = listLocalBranches(repository);
         if (branchCommitMap.isEmpty() && OriginBackfill.hasOrigin(repository)) {
             try {
-                OriginBackfill.fetchFromOrigin(repository);
+                OriginBackfill.fetchFromOrigin(repository, null);
                 OriginBackfill.checkoutTrackingBranches(repository);
                 branchCommitMap = listLocalBranches(repository);
             } catch (Exception e) {

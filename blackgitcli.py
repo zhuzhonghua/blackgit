@@ -31,6 +31,11 @@ class CloneCommand:
     run = self.blackw.run_cmd
     run(['git', 'init', '.'], cwd=dest)
     run(['git', 'remote', 'add', 'origin', url], cwd=dest)
+    # Remember who we are so the cared-file list (blackw-add-<user>.tsv) is
+    # per-user even when several people share a working copy.
+    user = self.user_from_url(url)
+    if user:
+        run(['git', 'config', '--local', 'blackw.user', user], cwd=dest)
     self.partialclone(dest)
     branch = self.defaultbranch(dest)
     self.fetch(dest)
@@ -48,6 +53,14 @@ class CloneCommand:
     p.add_argument("dest", nargs="?")
     ns = p.parse_args(argv[2:])
     return ns.url, ns.dest
+
+  def user_from_url(self, url):
+    """Extract the username from https://user:token@host/x.git (empty if none)."""
+    from urllib.parse import urlparse
+    try:
+        return urlparse(url).username or ""
+    except Exception:
+        return ""
 
   def checkurl(self, url):
     if not url.startswith("https://") and not url.startswith("http://"):
@@ -220,6 +233,7 @@ class AddCommand:
   def __init__(self, blackw):
     self.blackw = blackw
     self.usage = ("usage: git blackw add <path> [<path>...]\n"
+                  "       git blackw add -r|--recursive <dir> [<dir>...]\n"
                   "       git blackw add -d <path> [<path>...]\n"
                   "       git blackw add -l | --list")
 
@@ -232,11 +246,13 @@ class AddCommand:
         raise Exception(f"{self.usage}")
       self.listpaths()
       return
-    delete = False
+    recursive = False
     paths = []
     for a in args:
       if a in ("-d", "--delete"):
         delete = True
+      elif a in ("-r", "--recursive"):
+        recursive = True
       elif a.startswith("-"):
         raise Exception(f"unknown option {a}\n{self.usage}")
       else:
@@ -261,12 +277,24 @@ class AddCommand:
         raise Exception(f"no such path in HEAD: {rel}\n"
                         f"run 'git blackw ls' to see the tree")
       mode, typ, sha = entry
-      if typ != "blob":
-        raise Exception(f"add only supports files (blob), {rel} is a {typ}\n"
-                        f"{self.usage}")
+      if typ == "blob":
       if rel not in kept:
         kept.add(rel)
         added.append(rel)
+      elif typ == "tree":
+        # A directory: expand to the blob files under it. Without --recursive
+        # only the top-level files of the directory are cared about; with
+        # --recursive every file under the whole subtree is.
+        blobs = bw.ls_tree_blobs(toplevel, "HEAD", rel, recursive)
+        if not blobs:
+          raise Exception(f"directory {rel} contains no files")
+        for b in blobs:
+          if b not in kept:
+            kept.add(b)
+            added.append(b)
+      else:
+        raise Exception(f"add only supports files/directories, {rel} is a {typ}\n"
+                        f"{self.usage}")
     bw.set_sparse(toplevel, kept)
     bw.write_add_set(toplevel, kept)
     if added:
@@ -285,13 +313,28 @@ class AddCommand:
       if rel == ".":
         raise Exception(f"not a file {p}\n{self.usage}")
       rels.append(rel)
-    missing = [r for r in rels if r not in kept]
+    # Expand a directory argument to every cared file under it (prefix match),
+    # so `add -d somedir` removes everything that `add somedir [--recursive]`
+    # pulled in. A plain file path maps to itself.
+    to_remove = set()
+    for rel in rels:
+      entry = bw.ls_entry(toplevel, "HEAD", rel)
+      if entry is not None and entry[1] == "tree":
+        prefix = rel + "/"
+        expanded = {f for f in kept if f.startswith(prefix)}
+        if not expanded:
+          raise Exception(f"directory {rel} has no cared files\n"
+                          f"run 'git blackw add -l' to list")
+        to_remove.update(expanded)
+      else:
+        to_remove.add(rel)
+    missing = [r for r in to_remove if r not in kept]
     if missing:
-      raise Exception(f"not in the cared set: {', '.join(missing)}\n"
+      raise Exception(f"not in the cared set: {', '.join(sorted(missing))}\n"
                       f"run 'git blackw add -l' to list")
     if not kept:
       raise Exception(f"nothing added yet\n{self.usage}")
-    for r in rels:
+    for r in to_remove:
       kept.discard(r)
     if not kept:
       # Nothing cared anymore: re-arm the full-exclusion sparse rule so a
@@ -413,7 +456,15 @@ class BlackGitCli:
                            cwd=top).strip()
 
   def add_file(self, top):
-    return os.path.join(self.gitdir(top), ADD_FILE)
+    user = self.current_user(top)
+    name = f"blackw-add-{user}.tsv" if user else ADD_FILE
+    return os.path.join(self.gitdir(top), name)
+
+  def current_user(self, top):
+    try:
+      return self.git_output(["git", "config", "blackw.user"], cwd=top).strip()
+    except Exception:
+      return ""
 
   def read_add_set(self, top):
     f = self.add_file(top)
@@ -447,6 +498,25 @@ class BlackGitCli:
       rules = ["/" + p for p in sorted(paths)]
     self.run_cmd(["git", "sparse-checkout", "set", "--no-cone"] + rules,
                  cwd=top)
+
+  def ls_tree_blobs(self, top, treeish, dir_rel, recursive):
+    """All blob paths directly under dir_rel in treeish, repo-relative.
+    Without recursive only top-level entries are listed; with recursive the
+    whole subtree is walked. Trees themselves are skipped."""
+    cmd = ["git", "ls-tree", "-z"]
+    if recursive:
+        cmd.append("-r")
+    cmd += [treeish, "--", dir_rel]
+    out = self.git_output(cmd, cwd=top)
+    blobs = []
+    for raw in out.split("\0"):
+      if not raw:
+        continue
+      meta, _, name = raw.partition("\t")
+      parts = meta.split()
+      if len(parts) == 3 and parts[1] == "blob":
+        blobs.append(name)
+    return blobs
 
   def ls_entry(self, top, treeish, rel):
     """(mode, type, sha) of rel in treeish, or None. Paths are literal."""

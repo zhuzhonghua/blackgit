@@ -1,7 +1,9 @@
 package com.blackhttp.githttp;
 
 import com.black.GitProtocolException;
+import com.black.GitRepo;
 import com.black.Log;
+import com.black.RepoAuthz;
 import com.black.ShallowRequest;
 import com.blackhttp.Config;
 import com.blackhttp.SpooledBuffer;
@@ -19,10 +21,24 @@ final class UploadPackService {
         this.config = config;
     }
 
-    GitResponse upload(InputStream in, boolean protocolV2, ShallowRequest shallow) {
+    GitResponse upload(InputStream in, boolean protocolV2, ShallowRequest shallow,
+                       String user, String authz) {
         SpooledBuffer out = new SpooledBuffer(config.spoolMemoryLimit);
         try {
-            com.black.UploadPackService.upload(gitDir, in, out, protocolV2, config.blobAllow);
+            // Per-repo authz: when the repository has its own blackw-authz
+            // file, use the paths the authenticated user may read; otherwise
+            // fall back to the server-wide --blob-allow list. A user with an
+            // authz file but no granted paths gets a deny-all sentinel.
+            java.util.List<String> allowPaths;
+            org.eclipse.jgit.lib.Repository repo = GitRepo.open(gitDir);
+            allowPaths = RepoAuthz.allowedReadPaths(repo, user);
+            if (allowPaths == null) {
+                allowPaths = config.blobAllow;
+            } else if (allowPaths.isEmpty()) {
+                allowPaths = java.util.List.of("\0-deny-all");
+            }
+            com.black.UploadPackService.upload(gitDir, in, out, protocolV2,
+                    allowPaths, user, authz);
             Log.logger.info("upload-pack served {} bytes from {} v2={} {}",
                     out.size(), gitDir, protocolV2, shallow.summary());
             if (Log.logger.isDebugEnabled()) {

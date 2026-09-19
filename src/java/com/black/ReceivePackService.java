@@ -21,12 +21,15 @@ public final class ReceivePackService {
      * @param gitDir the repository directory (bare, worktree, or linked worktree)
      * @param in     the client request body (pkt-line receive-pack request)
      * @param out    the response body stream
+     * @param user   authenticated client username (from Authorization: Basic);
+     *               non-null because the HTTP layer rejects anonymous pushes
      * @throws GitProtocolException on a malformed client request
      * @throws Exception            on I/O or unexpected errors
      */
-    public static void receive(File gitDir, InputStream in, OutputStream out)
-            throws Exception {
+    public static void receive(File gitDir, InputStream in, OutputStream out,
+                               String user) throws Exception {
         Repository repo = GitRepo.open(gitDir); // shared, cached — do not close
+        Log.logger.info("receive-pack push by user={} on {}", user, gitDir);
             ReceivePack rp = new ReceivePack(repo);
         rp.setAllowNonFastForwards(false); // reject --force / non-fast-forward pushes
         rp.setAllowDeletes(false);         // reject ref deletion

@@ -38,6 +38,7 @@ import static io.netty.handler.codec.http.HttpHeaderValues.CLOSE;
 import static io.netty.handler.codec.http.HttpResponseStatus.BAD_REQUEST;
 import static io.netty.handler.codec.http.HttpResponseStatus.INTERNAL_SERVER_ERROR;
 import static io.netty.handler.codec.http.HttpResponseStatus.NOT_FOUND;
+import static io.netty.handler.codec.http.HttpResponseStatus.UNAUTHORIZED;
 
 public final class GitHttpHandler extends ChannelInboundHandlerAdapter {
 
@@ -53,6 +54,10 @@ public final class GitHttpHandler extends ChannelInboundHandlerAdapter {
     private File repoDir;
     private String pendingEndpoint;
     private SpooledBuffer inBody;
+    /** Decoded username from the client's Authorization: Basic header; null until authed. */
+    private String authnUser;
+    /** Raw Authorization header value, forwarded to origin verbatim. */
+    private String authnAuthz;
 
     public GitHttpHandler(RepoResolver resolver, Config config) {
         this.resolver = resolver;
@@ -113,8 +118,35 @@ public final class GitHttpHandler extends ChannelInboundHandlerAdapter {
             return;
         }
 
-        if (HttpMethod.GET.name().equals(method) || HttpMethod.HEAD.name().equals(method)) {
-            if ("info/refs".equals(endpoint)) {
+        boolean isGet = HttpMethod.GET.name().equals(method)
+                || HttpMethod.HEAD.name().equals(method);
+        boolean isPost = HttpMethod.POST.name().equals(method);
+        boolean isInfoRefs = "info/refs".equals(endpoint);
+        boolean isUploadPack = "git-upload-pack".equals(endpoint);
+        boolean isReceivePack = "git-receive-pack".equals(endpoint);
+
+        // Only smart-git endpoints require authentication; unknown paths just 404.
+        if (!((isGet && isInfoRefs) || (isPost && (isUploadPack || isReceivePack)))) {
+            writeResponse(ctx, GitResponse.error(NOT_FOUND, "not found"));
+            return;
+        }
+
+        // --- Authenticate: require Authorization: Basic, reject anonymous ---
+        String authz = req.headers().get("Authorization");
+        String user = parseBasicUser(authz);
+        if (user == null) {
+            writeResponse(ctx, GitResponse.unauthorized(
+                    "authentication required: send "
+                    + "'Authorization: Basic <base64(user:token)>'"));
+            return;
+        }
+        authnUser = user;
+        authnAuthz = authz;
+        Log.logger.info("authn user={} {} remote={}", user, requestUrl,
+                ctx.channel().remoteAddress());
+        // --- end authentication ---
+
+        if (isGet) {
                 bodyless = HttpMethod.HEAD.name().equals(method);
                 String service = queryParameter(req, "service");
                 boolean v2 = wantsV2(req);
@@ -122,19 +154,13 @@ public final class GitHttpHandler extends ChannelInboundHandlerAdapter {
                 Log.logger.debug("info/refs request service={} protocolV2={} shallowHint={}",
                         service, v2, shallowHint);
                 writeResponse(ctx, new InfoRefsService(dir, config)
-                        .advertise(service, v2, shallowHint));
-                return;
-            }
-            writeResponse(ctx, GitResponse.error(NOT_FOUND, "not found"));
+                    .advertise(service, v2, shallowHint, user, authz));
             return;
         }
-        if (HttpMethod.POST.name().equals(method)
-                && ("git-upload-pack".equals(endpoint) || "git-receive-pack".equals(endpoint))) {
+
+        // POST git-upload-pack / git-receive-pack: buffer the body, then dispatch.
             inBody = new SpooledBuffer(config.spoolMemoryLimit);
             pendingEndpoint = endpoint;
-            return;
-        }
-        writeResponse(ctx, GitResponse.error(BAD_REQUEST, "unexpected method or path"));
     }
 
     private void onContent(ChannelHandlerContext ctx, HttpContent content) throws IOException {
@@ -150,8 +176,12 @@ public final class GitHttpHandler extends ChannelInboundHandlerAdapter {
                 pendingEndpoint = null;
                 HttpRequest req = request;
                 File dir = repoDir;
+                String user = authnUser;
+                String authz = authnAuthz;
                 request = null;
                 repoDir = null;
+                authnUser = null;
+                authnAuthz = null;
                 Log.logger.debug("received POST body {} bytes for {}", reqBody.size(), target);
                 GitResponse resp;
                 try (reqBody) {
@@ -159,9 +189,11 @@ public final class GitHttpHandler extends ChannelInboundHandlerAdapter {
                     ShallowRequest shallow = FetchRequestParser.parse(reqBody.input(), v2);
                     BufferedInputStream bin = new BufferedInputStream(reqBody.input());
                     if ("git-upload-pack".equals(target)) {
-                        resp = new UploadPackService(dir, config).upload(bin, v2, shallow);
+                        resp = new UploadPackService(dir, config)
+                                .upload(bin, v2, shallow, user, authz);
                     } else if ("git-receive-pack".equals(target)) {
-                        resp = new ReceivePackService(dir, config).receive(bin);
+                        resp = new ReceivePackService(dir, config)
+                                .receive(bin, user, authz);
                     } else {
                         resp = GitResponse.error(BAD_REQUEST, "unexpected request");
                     }
@@ -208,6 +240,37 @@ public final class GitHttpHandler extends ChannelInboundHandlerAdapter {
         return new QueryStringDecoder(req.uri()).parameters().containsKey(name);
     }
 
+    /**
+     * Extracts the username from an {@code Authorization: Basic base64(user:token)}
+     * header. Returns null when the header is absent or malformed (anonymous).
+     * The raw header value itself is kept separately and forwarded to origin
+     * verbatim, so the token is never decoded or stored here.
+     */
+    private static String parseBasicUser(String authz) {
+        if (authz == null) {
+            return null;
+        }
+        if (!authz.regionMatches(true, 0, "Basic ", 0, 6)) {
+            return null;
+        }
+        String b64 = authz.substring(6).trim();
+        if (b64.isEmpty()) {
+            return null;
+        }
+        try {
+            String decoded = new String(java.util.Base64.getDecoder().decode(b64),
+                    java.nio.charset.StandardCharsets.UTF_8);
+            int colon = decoded.indexOf(':');
+            if (colon <= 0) {
+                return null;
+            }
+            String user = decoded.substring(0, colon);
+            return user.isEmpty() ? null : user;
+        } catch (IllegalArgumentException e) {
+            return null;
+        }
+    }
+
     /** Returns the part after the repo segment, e.g. "/x.git/info/refs" -> "info/refs". */
     private static String endpoint(String path) {
         if (path == null) {
@@ -229,6 +292,9 @@ public final class GitHttpHandler extends ChannelInboundHandlerAdapter {
         HttpResponse head = new DefaultHttpResponse(HttpVersion.HTTP_1_1, resp.status);
         if (resp.contentType != null) {
             head.headers().set(CONTENT_TYPE, resp.contentType);
+        }
+        if (resp.wwwAuthenticate != null) {
+            head.headers().set("WWW-Authenticate", resp.wwwAuthenticate);
         }
         head.headers().set(CACHE_CONTROL, "no-cache");
         long length = resp.body == null ? 0L : resp.body.size();

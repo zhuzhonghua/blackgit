@@ -32,11 +32,14 @@ public final class UploadPackService {
      * @param out        the response body stream
      * @param protocolV2 true when the client negotiated protocol v2
      * @param blobAllow  path-based blob allowlist; empty = all blobs downloadable
+     * @param user       authenticated client username (from Authorization: Basic)
+     * @param authz      raw Authorization header value, forwarded to origin verbatim
      * @throws GitProtocolException on a malformed client request
      * @throws Exception            on I/O or unexpected errors
      */
     public static void upload(File gitDir, InputStream in, OutputStream out,
-                              boolean protocolV2, List<String> blobAllow) throws Exception {
+                              boolean protocolV2, List<String> blobAllow,
+                              String user, String authz) throws Exception {
         Repository repo = GitRepo.open(gitDir); // shared, cached — do not close
 
         // Buffer the whole request body so we can pre-parse the client's wants
@@ -47,7 +50,9 @@ public final class UploadPackService {
         byte[] body = in.readAllBytes();
         ShallowRequest req = FetchRequestParser.parse(
                 new ByteArrayInputStream(body), protocolV2);
-        backfillMissingWants(repo, req);
+        backfillMissingWants(repo, req, authz);
+        Log.logger.info("upload-pack served for user={} repo={} v2={} wants={}",
+                user, gitDir, protocolV2, req.wants.size());
 
             UploadPack up = new UploadPack(repo);
             up.setBiDirectionalPipe(false);
@@ -72,7 +77,8 @@ public final class UploadPackService {
      * lacks the object (or no origin is configured) the request is left for
      * JGit to reject with the usual protocol error.
      */
-    private static void backfillMissingWants(Repository repo, ShallowRequest req) {
+    private static void backfillMissingWants(Repository repo, ShallowRequest req,
+                                             String authz) {
         for (ObjectId want : req.wants) {
             boolean present;
             try (ObjectReader reader = repo.newObjectReader()) {
@@ -86,7 +92,7 @@ public final class UploadPackService {
             }
             Log.logger.info("want {} missing locally, on-demand backfill from origin",
                     want.name());
-            if (!OriginBackfill.ensureSha(repo, want)) {
+            if (!OriginBackfill.ensureSha(repo, want, authz)) {
                 Log.logger.warn("want {} could not be backfilled from origin", want.name());
             }
         }
