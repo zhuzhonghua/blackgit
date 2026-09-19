@@ -16,10 +16,4 @@ public final class Config {
     public int spoolMemoryLimit = 1 * 1024 * 1024;
     /** Extra I/O threads for git CPU work; 0 means Netty default. */
     public int httpThreads;
-    /**
-     * Path-based blob allowlist for upload-pack: when non-empty, only blobs
-     * reachable at these repo-relative paths are downloadable; other blobs are
-     * refused. Empty (default) = every blob is downloadable.
-     */
-    public java.util.List<String> blobAllow = java.util.Collections.emptyList();
 }

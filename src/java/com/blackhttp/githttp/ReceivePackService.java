@@ -91,10 +91,18 @@ final class ReceivePackService {
                     Log.logger.info("local cache archived by replaying receive-pack for {}",
                             gitDir);
                 } catch (Exception e) {
-                    // The push itself succeeded on origin; a local replay hiccup
-                    // must not turn a successful push into an error for the client.
-                    Log.logger.warn("post-push local archive failed (push still "
-                            + "OK): {}", e.toString());
+                    // Severe: the push landed on origin but the local cache did
+                    // not get it. Force-refresh the local cache from origin so we
+                    // converge. The client already got origin's success, so this
+                    // is logged and self-healed, not surfaced as a push failure.
+                    Log.logger.error("post-push local replay FAILED for {}, "
+                            + "force-refreshing from origin: {}", gitDir, e.toString(), e);
+                    try {
+                        OriginBackfill.forceFetchFromOrigin(repo, authz);
+                    } catch (Exception e2) {
+                        Log.logger.error("FORCE refresh from origin also failed "
+                                + "for {}: {}", gitDir, e2.toString(), e2);
+                    }
                 }
                 try {
                     com.black.BlobAllowlist.invalidate(repo);

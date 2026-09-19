@@ -57,6 +57,26 @@ public class OriginBackfill {
     }
 
     /**
+     * Force-refreshes local branches to match origin, used when a post-push
+     * local replay failed: the push already landed on origin, so overwrite
+     * local refs with {@code +refs/heads/*:refs/heads/*} and pull every object
+     * origin has.
+     */
+    public static void forceFetchFromOrigin(Repository repository, String authz)
+            throws Exception {
+        Log.logger.warn("FORCE fetch from origin to refresh local cache for {}",
+                repository.getDirectory());
+        var fetch = new Git(repository).fetch()
+                .setRemote("origin")
+                .setRefSpecs(new RefSpec("+refs/heads/*:refs/heads/*"));
+        UsernamePasswordCredentialsProvider cp = credentials(authz);
+        if (cp != null) {
+            fetch.setCredentialsProvider(cp);
+        }
+        fetch.call();
+    }
+
+    /**
      * Makes sure {@code wanted} is available locally, fetching it from origin
      * on demand if it is missing.
      *

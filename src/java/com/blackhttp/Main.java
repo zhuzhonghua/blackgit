@@ -31,9 +31,6 @@ public final class Main {
                 case "--spool-memory" ->
                         config.spoolMemoryLimit = (int) parseBytes(require(arg, value(args, ++i)));
                 case "--http-threads" -> config.httpThreads = Integer.parseInt(require(arg, value(args, ++i)));
-                case "--blob-allow" ->
-                        config.blobAllow = com.black.BlobAllowlist.append(
-                                config.blobAllow, require(arg, value(args, ++i)));
                 case "--read-only" -> config.readOnly = true;
                 case "--tls" -> config.tls = true;
                 case "--help", "-h" -> {
@@ -85,8 +82,6 @@ public final class Main {
                   --key-password <p>      key password
                   --spool-memory <bytes>  in-memory buffer before spooling to disk (default 1M)
                   --http-threads <n>      worker threads for git processing
-                  --blob-allow <path>     repo-relative path whose blobs are downloadable
-                                          (repeatable; empty = all blobs downloadable)
                 """);
     }
 }

@@ -25,15 +25,15 @@ final class UploadPackService {
                        String user, String authz) {
         SpooledBuffer out = new SpooledBuffer(config.spoolMemoryLimit);
         try {
-            // Per-repo authz: when the repository has its own blackw-authz
-            // file, use the paths the authenticated user may read; otherwise
-            // fall back to the server-wide --blob-allow list. A user with an
-            // authz file but no granted paths gets a deny-all sentinel.
+            // No authz file = no permission setting = allow every blob. Only
+            // when the repository has a blackw-authz file do we filter: the
+            // user's granted paths become the allowlist; an authz file that
+            // grants this user nothing gets a deny-all sentinel.
             java.util.List<String> allowPaths;
             org.eclipse.jgit.lib.Repository repo = GitRepo.open(gitDir);
             allowPaths = RepoAuthz.allowedReadPaths(repo, user);
             if (allowPaths == null) {
-                allowPaths = config.blobAllow;
+                allowPaths = java.util.List.of();
             } else if (allowPaths.isEmpty()) {
                 allowPaths = java.util.List.of("\0-deny-all");
             }
