@@ -35,7 +35,10 @@ import static io.netty.handler.codec.http.HttpHeaderNames.CONTENT_LENGTH;
 import static io.netty.handler.codec.http.HttpHeaderNames.CONTENT_TYPE;
 import static io.netty.handler.codec.http.HttpHeaderNames.HOST;
 import static io.netty.handler.codec.http.HttpHeaderValues.CLOSE;
+import io.netty.handler.codec.http.HttpResponseStatus;
 import static io.netty.handler.codec.http.HttpResponseStatus.BAD_REQUEST;
+import static io.netty.handler.codec.http.HttpResponseStatus.CONFLICT;
+import static io.netty.handler.codec.http.HttpResponseStatus.FORBIDDEN;
 import static io.netty.handler.codec.http.HttpResponseStatus.INTERNAL_SERVER_ERROR;
 import static io.netty.handler.codec.http.HttpResponseStatus.NOT_FOUND;
 import static io.netty.handler.codec.http.HttpResponseStatus.UNAUTHORIZED;
@@ -121,12 +124,17 @@ public final class GitHttpHandler extends ChannelInboundHandlerAdapter {
         boolean isGet = HttpMethod.GET.name().equals(method)
                 || HttpMethod.HEAD.name().equals(method);
         boolean isPost = HttpMethod.POST.name().equals(method);
+        boolean isDelete = "DELETE".equals(method);
         boolean isInfoRefs = "info/refs".equals(endpoint);
         boolean isUploadPack = "git-upload-pack".equals(endpoint);
         boolean isReceivePack = "git-receive-pack".equals(endpoint);
+        boolean isLock = "lock".equals(endpoint);
 
-        // Only smart-git endpoints require authentication; unknown paths just 404.
-        if (!((isGet && isInfoRefs) || (isPost && (isUploadPack || isReceivePack)))) {
+        // Only smart-git endpoints and the lock API require authentication;
+        // unknown paths just 404.
+        if (!((isGet && (isInfoRefs || isLock))
+                || (isPost && (isUploadPack || isReceivePack || isLock))
+                || (isDelete && isLock))) {
             writeResponse(ctx, GitResponse.error(NOT_FOUND, "not found"));
             return;
         }
@@ -145,6 +153,70 @@ public final class GitHttpHandler extends ChannelInboundHandlerAdapter {
         Log.logger.info("authn user={} {} remote={}", user, requestUrl,
                 ctx.channel().remoteAddress());
         // --- end authentication ---
+
+        // --- File lock API: GET / POST / DELETE <repo>/lock?path=xxx ---
+        if (isLock) {
+            String lockPath = queryParameter(req, "path");
+            com.black.FileLocks locks = new com.black.FileLocks(dir);
+            if (isGet) {
+                if (lockPath != null && !lockPath.isEmpty()) {
+                    com.black.FileLocks.Lock l = locks.get(lockPath);
+                    if (l == null) {
+                        writeResponse(ctx, GitResponse.raw(
+                                HttpResponseStatus.OK, "application/json",
+                                ("{\"path\":\"" + lockPath + "\",\"locked\":false}")
+                                        .getBytes(java.nio.charset.StandardCharsets.UTF_8)));
+                    } else {
+                        writeResponse(ctx, GitResponse.raw(
+                                HttpResponseStatus.OK, "application/json",
+                                ("{\"path\":\"" + lockPath + "\",\"locked\":true,"
+                                        + "\"user\":\"" + l.user + "\",\"since\":\""
+                                        + l.since + "\"}")
+                                        .getBytes(java.nio.charset.StandardCharsets.UTF_8)));
+                    }
+                } else {
+                    writeResponse(ctx, GitResponse.raw(
+                            HttpResponseStatus.OK, "application/json",
+                            com.black.FileLocksJson.toJson(locks.list())
+                                    .getBytes(java.nio.charset.StandardCharsets.UTF_8)));
+                }
+                return;
+            }
+            if (lockPath == null || lockPath.isEmpty()) {
+                writeResponse(ctx, GitResponse.error(BAD_REQUEST, "missing ?path="));
+                return;
+            }
+            if (isPost) {
+                String r = locks.lock(lockPath, user);
+                if ("ok".equals(r)) {
+                    writeResponse(ctx, GitResponse.raw(
+                            HttpResponseStatus.OK, "application/json",
+                            ("{\"path\":\"" + lockPath + "\",\"locked\":true,"
+                                    + "\"user\":\"" + user + "\"}")
+                                    .getBytes(java.nio.charset.StandardCharsets.UTF_8)));
+                } else {
+                    writeResponse(ctx, GitResponse.error(CONFLICT,
+                            r.replace("already-locked:", "already locked by ")));
+                }
+                return;
+            }
+            if (isDelete) {
+                String r = locks.unlock(lockPath, user);
+                if ("ok".equals(r)) {
+                    writeResponse(ctx, GitResponse.raw(
+                            HttpResponseStatus.OK, "application/json",
+                            ("{\"path\":\"" + lockPath + "\",\"locked\":false}")
+                                    .getBytes(java.nio.charset.StandardCharsets.UTF_8)));
+                } else if ("not-locked".equals(r)) {
+                    writeResponse(ctx, GitResponse.error(NOT_FOUND, "not locked"));
+                } else {
+                    writeResponse(ctx, GitResponse.error(FORBIDDEN,
+                            r.replace("not-holder:", "not the holder: ")));
+                }
+                return;
+            }
+        }
+        // --- end lock API ---
 
         if (isGet) {
                 bodyless = HttpMethod.HEAD.name().equals(method);

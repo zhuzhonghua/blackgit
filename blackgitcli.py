@@ -419,6 +419,117 @@ class UpdateCommand:
       raise Exception(f"update: HEAD is detached; run on a branch\n{self.usage}")
     return branch
 
+class LockCommand:
+  def __init__(self, blackw):
+    self.blackw = blackw
+    self.usage = ("usage: git blackw lock <path>\n"
+                  "       git blackw lock -d <path>\n"
+                  "       git blackw locks")
+
+  def run(self, argv):
+    args = argv[2:]
+    if not args:
+      raise Exception(f"{self.usage}")
+    if args[0] == "locks" or args[0] == "-l" or args[0] == "--list":
+      self.list_locks()
+      return
+    delete = False
+    paths = []
+    for a in args:
+      if a in ("-d", "--delete", "--unlock"):
+        delete = True
+      elif a.startswith("-"):
+        raise Exception(f"unknown option {a}\n{self.usage}")
+      else:
+        paths.append(a)
+    if not paths:
+      raise Exception(f"{self.usage}")
+    if delete:
+      for p in paths:
+        self.unlock(p)
+    else:
+      for p in paths:
+        self.lock(p)
+
+  def _server_url(self, top, repo_segment):
+    """origin URL like http://host:port/demo.git -> http://host:port/demo.git/lock"""
+    url = self.blackw.git_output(["git", "remote", "get-url", "origin"],
+                                  cwd=top).strip()
+    return url.rstrip("/") + "/lock?path=" + repo_segment
+
+  def _auth(self, top, origin_url):
+    """Ask git credential for username:password for this origin."""
+    import urllib.parse
+    parsed = urllib.parse.urlparse(origin_url)
+    host = parsed.hostname
+    # git credential uses host[:port]
+    netloc = parsed.netloc
+    # strip userinfo if embedded
+    if "@" in netloc:
+      netloc = netloc.split("@", 1)[1]
+    inp = f"protocol={parsed.scheme}\nhost={netloc}\n\n"
+    out = self.blackw.git_output(["git", "credential", "fill"],
+                                  cwd=top, input=inp)
+    creds = {}
+    for line in out.splitlines():
+      if "=" in line:
+        k, v = line.split("=", 1)
+        creds[k] = v
+    import base64
+    raw = creds.get("username", "") + ":" + creds.get("password", "")
+    return "Basic " + base64.b64encode(raw.encode()).decode()
+
+  def lock(self, path):
+    bw = self.blackw
+    top = bw._top()
+    rel = bw.normalizerel(path)
+    url = bw.git_output(["git", "remote", "get-url", "origin"], cwd=top).strip()
+    api = url.rstrip("/") + "/lock?path=" + rel
+    auth = self._auth(top, url)
+    import urllib.request, json
+    req = urllib.request.Request(api, method="POST", headers={"Authorization": auth})
+    try:
+      with urllib.request.urlopen(req) as resp:
+        data = json.loads(resp.read())
+        pout(f"lock: {data['path']} locked by {data['user']}")
+    except urllib.error.HTTPError as e:
+      msg = e.read().decode()
+      raise Exception(f"lock: {e.code} {msg}")
+
+  def unlock(self, path):
+    bw = self.blackw
+    top = bw._top()
+    rel = bw.normalizerel(path)
+    url = bw.git_output(["git", "remote", "get-url", "origin"], cwd=top).strip()
+    api = url.rstrip("/") + "/lock?path=" + rel
+    auth = self._auth(top, url)
+    import urllib.request, json
+    req = urllib.request.Request(api, method="DELETE", headers={"Authorization": auth})
+    try:
+      with urllib.request.urlopen(req) as resp:
+        data = json.loads(resp.read())
+        pout(f"lock: {data['path']} unlocked")
+    except urllib.error.HTTPError as e:
+      msg = e.read().decode()
+      raise Exception(f"lock: {e.code} {msg}")
+
+  def list_locks(self):
+    bw = self.blackw
+    top = bw._top()
+    url = bw.git_output(["git", "remote", "get-url", "origin"], cwd=top).strip()
+    api = url.rstrip("/") + "/lock"
+    auth = self._auth(top, url)
+    import urllib.request, json
+    req = urllib.request.Request(api, method="GET", headers={"Authorization": auth})
+    with urllib.request.urlopen(req) as resp:
+        data = json.loads(resp.read())
+    if not data:
+      pout("(no locks)")
+      return
+    for path, info in sorted(data.items()):
+        pout(f"  {path}  locked by {info['user']} since {info.get('since','?')}")
+    pout(f"({len(data)} lock(s))")
+
 class BlackGitCli:
   def __init__(self):
     self.toplevel = None
@@ -436,6 +547,10 @@ class BlackGitCli:
       FollowCommand(self).run(argv)
     elif cmd == "update":
       UpdateCommand(self).run(argv)
+    elif cmd == "lock":
+      LockCommand(self).run(argv)
+    elif cmd == "locks":
+      LockCommand(self).list_locks()
     else:
       # Everything blackw does not override (push, status, log, ...) is handed
       # straight to stock git as `git <args...>`. execvp replaces this process,
@@ -542,12 +657,13 @@ class BlackGitCli:
 
   def git_output(self, cmd, *arg, **args):
     pout(f"{cmd}")
+    inp = args.pop("input", None)
     with subprocess.Popen(cmd,
                           stdout=subprocess.PIPE,
                           stderr=subprocess.PIPE,
                           text=True,
                           *arg, **args) as p:
-      out, err = p.communicate()
+      out, err = p.communicate(input=inp)
       if err:
         perr(err)
       if p.returncode != 0:

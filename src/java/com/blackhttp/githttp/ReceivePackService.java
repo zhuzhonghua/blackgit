@@ -1,5 +1,6 @@
 package com.blackhttp.githttp;
 
+import com.black.FileLocks;
 import com.black.GitProtocolException;
 import com.black.GitRepo;
 import com.black.Log;
@@ -10,13 +11,24 @@ import com.blackhttp.Config;
 import com.blackhttp.SpooledBuffer;
 import io.netty.handler.codec.http.HttpResponseStatus;
 
+import org.eclipse.jgit.lib.ObjectId;
 import org.eclipse.jgit.lib.Repository;
+import org.eclipse.jgit.revwalk.RevCommit;
+import org.eclipse.jgit.revwalk.RevWalk;
+import org.eclipse.jgit.transport.ReceiveCommand;
+import org.eclipse.jgit.transport.ReceivePack;
+import org.eclipse.jgit.treewalk.CanonicalTreeParser;
+import org.eclipse.jgit.treewalk.EmptyTreeIterator;
+import org.eclipse.jgit.treewalk.TreeWalk;
 
 import java.io.ByteArrayInputStream;
 import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
 import java.net.http.HttpResponse;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Set;
 
 final class ReceivePackService {
     private final File gitDir;
@@ -61,7 +73,23 @@ final class ReceivePackService {
                     "cannot read push body: " + e.getMessage());
         }
 
-        // 3. When the cache has a remote.origin.url, proxy the push to
+        // 3. Lock check: dry-run locally with a pre-receive hook that diffs
+        //    each ref update and rejects changes to files locked by others.
+        //    The dry-run also writes the new objects into the local object db.
+        try {
+            List<String> violations = checkLocks(gitDir, body, user);
+            if (!violations.isEmpty()) {
+                Log.logger.warn("push rejected by locks for user={}: {}", user, violations);
+                return GitResponse.error(HttpResponseStatus.FORBIDDEN,
+                        "file lock: " + String.join("; ", violations));
+            }
+        } catch (GitProtocolException e) {
+            Log.logger.warn("lock check protocol error (allowing push) {}: {}", gitDir, e.toString());
+        } catch (Exception e) {
+            Log.logger.warn("lock check failed (allowing push) {}: {}", gitDir, e.toString());
+        }
+
+        // 4. When the cache has a remote.origin.url, proxy the push to
         //    GitHub/GitLab using the client's token; otherwise apply locally.
         String origin = OriginProxy.originUrl(repo);
         if (origin == null || origin.isEmpty()) {
@@ -134,6 +162,96 @@ final class ReceivePackService {
             Log.logger.error("local receive-pack failed {} : {}", gitDir, e.toString(), e);
             return GitResponse.error(HttpResponseStatus.INTERNAL_SERVER_ERROR, e.toString());
         }
+    }
+
+    /**
+     * Dry-run the push locally to check file locks. Receives the new objects,
+     * runs a pre-receive hook that diffs each ref update against the lock
+     * table, then rolls refs back to their old values (so the dry-run is
+     * invisible). Returns the list of lock violations (empty = OK).
+     */
+    @SuppressWarnings("unchecked")
+    private static List<String> checkLocks(File gitDir, byte[] body, String pusher)
+            throws Exception {
+        Repository repo = GitRepo.open(gitDir);
+        FileLocks locks = new FileLocks(gitDir);
+        java.util.List<String> violations = new java.util.ArrayList<>();
+        java.util.List<ReceiveCommand> applied = new java.util.ArrayList<>();
+
+        ReceivePack rp = new ReceivePack(repo);
+        rp.setBiDirectionalPipe(false);
+        rp.setTimeout(0);
+        rp.setPreReceiveHook((rpArg, cmds) -> {
+            try (RevWalk rw = new RevWalk(repo)) {
+                for (ReceiveCommand cmd : cmds) {
+                    applied.add(cmd);
+                    ObjectId oldId = cmd.getOldId();
+                    ObjectId newId = cmd.getNewId();
+                    if (newId.equals(ObjectId.zeroId())) {
+                        continue; // branch deletion — not checked here
+                    }
+                    Set<String> changed = changedPaths(repo, rw, oldId, newId);
+                    violations.addAll(locks.findViolations(changed, pusher));
+                }
+            } catch (Exception e) {
+                throw new RuntimeException(e);
+            }
+        });
+
+        SpooledBuffer out = new SpooledBuffer(1 << 20);
+        try {
+            rp.receive(new ByteArrayInputStream(body), out, null);
+        } finally {
+            // Roll back any ref updates the dry-run performed.
+            for (ReceiveCommand cmd : applied) {
+                if (cmd.getNewId() != null && cmd.getResult() == ReceiveCommand.Result.OK) {
+                    try {
+                        if (cmd.getOldId().equals(ObjectId.zeroId())) {
+                            org.eclipse.jgit.lib.RefUpdate ru = repo.updateRef(cmd.getRefName());
+                            ru.delete();
+                        } else {
+                            org.eclipse.jgit.lib.RefUpdate ru = repo.updateRef(cmd.getRefName());
+                            ru.setNewObjectId(cmd.getOldId());
+                            ru.forceUpdate();
+                        }
+                    } catch (Exception e) {
+                        Log.logger.warn("rollback dry-run ref {} failed: {}",
+                                cmd.getRefName(), e.toString());
+                    }
+                }
+            }
+            closeQuietly(out);
+        }
+        return violations;
+    }
+
+    /** Computes repo-relative paths changed between old and new (tree diff). */
+    private static Set<String> changedPaths(Repository repo, RevWalk rw,
+                                            ObjectId oldId, ObjectId newId) throws IOException {
+        Set<String> paths = new HashSet<>();
+        CanonicalTreeParser oldTreeIter = new CanonicalTreeParser();
+        CanonicalTreeParser newTreeIter = new CanonicalTreeParser();
+        try (TreeWalk tw = new TreeWalk(repo)) {
+            if (!oldId.equals(ObjectId.zeroId())) {
+                RevCommit oldCommit = rw.parseCommit(oldId);
+                oldTreeIter.reset(repo.newObjectReader(), oldCommit.getTree());
+            } else {
+                oldTreeIter.reset();
+            }
+            RevCommit newCommit = rw.parseCommit(newId);
+            newTreeIter.reset(repo.newObjectReader(), newCommit.getTree());
+            if (oldId.equals(ObjectId.zeroId())) {
+                tw.addTree(new EmptyTreeIterator());
+            } else {
+                tw.addTree(oldTreeIter);
+            }
+            tw.addTree(newTreeIter);
+            tw.setRecursive(true);
+            while (tw.next()) {
+                paths.add(tw.getPathString());
+            }
+        }
+        return paths;
     }
 
     private static void closeQuietly(SpooledBuffer out) {
