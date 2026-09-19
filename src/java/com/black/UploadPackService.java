@@ -62,6 +62,16 @@ public final class UploadPackService {
             }
         BlobAllowlist allow = BlobAllowlist.get(repo, blobAllow);
         if (!allow.allowsAll()) {
+            // Pre-validate the client's wants ourselves. A denied blob becomes a
+            // clean protocol error (HTTP 400 with the reason) rather than an
+            // opaque HTTP 500 / "expected packfile": git v2 fetch in `done` mode
+            // only reads the "packfile" section, so a hand-written "error" pkt
+            // would not be parsed and the client would hang.
+            String denied = findDeniedBlob(repo, allow, req.wants);
+            if (denied != null) {
+                Log.logger.info("upload-pack denied user={} repo={}: {}", user, gitDir, denied);
+                throw new GitProtocolException(denied);
+            }
             up.setRequestValidator((uploadPack, wants) -> checkBlobWants(repo, allow, wants));
         }
             try {
@@ -118,6 +128,54 @@ public final class UploadPackService {
                 }
             }
         }
+    }
+
+    /**
+     * Returns a human-readable denial reason when any client-wanted object is a
+     * blob outside the allowlist, or null when every want is downloadable.
+     * Commits/trees/tags are always allowed. A missing object that cannot be
+     * opened is treated as unauthorized: advertised commits/trees are always
+     * present in the local (shallow) cache, so a missing want is almost always
+     * a blob the client should not fetch.
+     */
+    private static String findDeniedBlob(Repository repo, BlobAllowlist allow,
+                                         Collection<ObjectId> wants) throws IOException {
+        try (ObjectReader reader = repo.newObjectReader()) {
+            for (ObjectId id : wants) {
+                int type;
+                try {
+                    type = reader.open(id).getType();
+                } catch (MissingObjectException e) {
+                    return "object " + id.name() + " not available or not authorized";
+                }
+                if (type == Constants.OBJ_BLOB && !allow.allows(id)) {
+                    return "blob " + id.name()
+                            + " not authorized (your account may not read this path)";
+                }
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Writes a protocol-level error so the git client prints the reason instead
+     * of failing with a bare "expected packfile".
+     *
+     * v2: the first pkt-line must be exactly "error" (git matches it with
+     * strcmp), followed by a pkt-line carrying the human-readable message, then
+     * a flush-pkt. v0/v1: the historical "ERR <message>" line plus a flush-pkt.
+     */
+    private static void writeUploadError(OutputStream out, boolean protocolV2,
+                                         String message) throws IOException {
+        PacketLineOut pck = new PacketLineOut(out);
+        if (protocolV2) {
+            pck.writeString("error\n");
+            pck.writeString(message + "\n");
+        } else {
+            pck.writeString("ERR " + message + "\n");
+        }
+        pck.end();
+        out.flush();
     }
 
     /**
