@@ -83,8 +83,10 @@ public final class AuthzFile {
                 continue;
             }
             if (current.equals(GROUPS_SECTION)) {
+                // In [groups], the left side is the group name (principal) and
+                // the right side (rights) is the comma-separated member list.
                 List<String> members = new ArrayList<>();
-                for (String m : principal.split(",")) {
+                for (String m : rights.split(",")) {
                     m = m.strip();
                     if (!m.isEmpty()) {
                         members.add(m);

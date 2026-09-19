@@ -27,7 +27,7 @@ final class InfoRefsService {
                 Log.logger.info("info/refs advertise upload-pack v2={} shallow-hint={} user={}",
                         protocolV2, shallowHint, user);
                 return GitResponse.ok("application/x-git-upload-pack-advertisement",
-                        advertiseUploadPack(protocolV2));
+                        advertiseUploadPack(protocolV2, authz));
             }
             if ("git-receive-pack".equals(service)) {
                 if (config.readOnly) {
@@ -72,9 +72,9 @@ final class InfoRefsService {
         }
     }
 
-    private SpooledBuffer advertiseUploadPack(boolean protocolV2) throws Exception {
+    private SpooledBuffer advertiseUploadPack(boolean protocolV2, String authz) throws Exception {
         ByteArrayOutputStream buf = new ByteArrayOutputStream();
-        com.black.UploadPackService.advertiseUploadPack(gitDir, buf, protocolV2);
+        com.black.UploadPackService.advertiseUploadPack(gitDir, buf, protocolV2, authz);
         return toSpool(buf);
     }
 

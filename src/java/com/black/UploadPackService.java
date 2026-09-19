@@ -126,12 +126,19 @@ public final class UploadPackService {
      * @param gitDir     the repository directory
      * @param out        the response body stream
      * @param protocolV2 true when the client negotiated protocol v2
+     * @param authz      raw Authorization header, forwarded to origin when
+     *                   syncing local heads to upstream so upstream authenticates
+     *                   as the same user; null to use the cache repo's own creds
      * @throws GitProtocolException on a malformed client request
      * @throws Exception            on I/O or unexpected errors
      */
     public static void advertiseUploadPack(File gitDir, OutputStream out,
-                                           boolean protocolV2) throws Exception {
+                                           boolean protocolV2, String authz) throws Exception {
         Repository repo = GitRepo.open(gitDir); // shared, cached — do not close
+        // Keep advertised tips fresh: if upstream was pushed to directly
+        // (bypassing this cache), sync local heads to origin while staying
+        // shallow, so clients through the proxy see the latest tips.
+        OriginBackfill.syncHeadsFromOrigin(repo, authz);
             UploadPack up = new UploadPack(repo);
             up.setBiDirectionalPipe(false);
             if (protocolV2) {

@@ -77,6 +77,35 @@ public class OriginBackfill {
     }
 
     /**
+     * Syncs local branch tips to match origin's heads <em>without</em>
+     * unshallowing the cache. Called before advertising refs so that clients
+     * talking through the proxy see upstream's latest tips even when upstream
+     * was pushed to directly (bypassing this cache). Best-effort: if origin is
+     * unreachable or errors, the local (possibly stale) refs are served instead.
+     * The shallow boundary is preserved by never calling {@code setUnshallow}.
+     */
+    public static void syncHeadsFromOrigin(Repository repository, String authz) {
+        if (!hasOrigin(repository)) {
+            return;
+        }
+        try {
+            Log.logger.info("sync local heads from origin for {}",
+                    repository.getDirectory());
+            var fetch = new Git(repository).fetch()
+                    .setRemote("origin")
+                    .setRefSpecs(new RefSpec("+refs/heads/*:refs/heads/*"));
+            UsernamePasswordCredentialsProvider cp = credentials(authz);
+            if (cp != null) {
+                fetch.setCredentialsProvider(cp);
+            }
+            fetch.call();
+        } catch (Exception e) {
+            Log.logger.warn("sync heads from origin failed ({}), serving local cache refs",
+                    e.toString());
+        }
+    }
+
+    /**
      * Makes sure {@code wanted} is available locally, fetching it from origin
      * on demand if it is missing.
      *

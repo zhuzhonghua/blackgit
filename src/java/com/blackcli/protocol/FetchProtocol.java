@@ -18,7 +18,7 @@ public class FetchProtocol implements Protocol {
     public void handle(SocketClient client, ByteBuffer data) throws Exception {
         String text = Util.tostr(data);
         Log.logger.debug("fetch request from {} shas=[{}]", client.addr, text.trim().replace("\n", ","));
-        byte[] pack = FetchService.fetch(BlackGit.bg.repository, text.split("\n"));
+        byte[] pack = FetchService.fetch(BlackGit.bg.repository, text.split("\n"), null);
         Log.logger.debug("fetch reply {} bytes to {}", pack.length, client.addr);
         client.write(pack);
     }

@@ -24,7 +24,7 @@
   :resource-paths ["script" "resources"]
   :source-paths ["script"]
   :uberjar-exclusions [#"(?:^|/)script/"]
-  :main com.blackgit.Main
+  :main com.blackhttp.Main
   :omit-source true
   :repl-options {:init-ns blackgit.core}
   :javac-options ["-target" "21" "-source" "21"]

@@ -118,7 +118,7 @@ public final class BlobAllowlist {
                     tw.addTree(c.getTree());
                     tw.setRecursive(true);
                     while (tw.next()) {
-                        if (want.contains(tw.getPathString())) {
+                        if (isAllowed(tw.getPathString())) {
                             blobs.add(tw.getObjectId(0));
                         }
                     }
@@ -132,5 +132,15 @@ public final class BlobAllowlist {
         computed = true;
         Log.logger.info("blob allowlist computed for {}: {} allowlisted blob(s) from paths {}",
                 repo.getDirectory(), blobs.size(), allowPaths);
+    }
+
+    /** A blob path is allowed when it equals an allowed prefix or lives under one. */
+    private boolean isAllowed(String path) {
+        for (String ap : allowPaths) {
+            if (path.equals(ap) || path.startsWith(ap + "/")) {
+                return true;
+            }
+        }
+        return false;
     }
 }

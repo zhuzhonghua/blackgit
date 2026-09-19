@@ -18,7 +18,7 @@ import java.util.Set;
 public class FetchService {
     public static final int MAX_COMMITS = 10;
 
-    public static byte[] fetch(Repository repository, String[] shas) throws IOException {
+    public static byte[] fetch(Repository repository, String[] shas, String authz) throws IOException {
         java.util.List<String> shaList = new java.util.ArrayList<>();
         for (String line : shas) {
             String t = line == null ? "" : line.trim();
@@ -69,7 +69,7 @@ public class FetchService {
                     // than unshallowing the whole cached repository.
                     if (backfilled.add(id.name())) {
                         Log.logger.info("on-demand backfill for missing {} from origin", id.name());
-                        if (!OriginBackfill.ensureSha(repository, id)) {
+                        if (!OriginBackfill.ensureSha(repository, id, authz)) {
                             throw e;
                         }
                     } else {

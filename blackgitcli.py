@@ -219,13 +219,13 @@ class LsCommand:
     self.blackw.git_output(['git', 'rev-parse', '--verify', '--quiet', ref],
                            cwd=toplevel)
 
-class AddCommand:
+class FollowCommand:
   def __init__(self, blackw):
     self.blackw = blackw
-    self.usage = ("usage: git blackw add <path> [<path>...]\n"
-                  "       git blackw add -r|--recursive <dir> [<dir>...]\n"
-                  "       git blackw add -d <path> [<path>...]\n"
-                  "       git blackw add -l | --list")
+    self.usage = ("usage: git blackw follow <path> [<path>...]\n"
+                  "       git blackw follow -r|--recursive <dir> [<dir>...]\n"
+                  "       git blackw follow -d <path> [<path>...]\n"
+                  "       git blackw follow -l | --list")
 
   def run(self, argv):
     args = argv[2:]
@@ -237,6 +237,7 @@ class AddCommand:
       self.listpaths()
       return
     recursive = False
+    delete = False
     paths = []
     for a in args:
       if a in ("-d", "--delete"):
@@ -314,14 +315,14 @@ class AddCommand:
         expanded = {f for f in kept if f.startswith(prefix)}
         if not expanded:
           raise Exception(f"directory {rel} has no cared files\n"
-                          f"run 'git blackw add -l' to list")
+                          f"run 'git blackw follow -l' to list")
         to_remove.update(expanded)
       else:
         to_remove.add(rel)
     missing = [r for r in to_remove if r not in kept]
     if missing:
       raise Exception(f"not in the cared set: {', '.join(sorted(missing))}\n"
-                      f"run 'git blackw add -l' to list")
+                      f"run 'git blackw follow -l' to list")
     if not kept:
       raise Exception(f"nothing added yet\n{self.usage}")
     for r in to_remove:
@@ -431,8 +432,8 @@ class BlackGitCli:
       BranchCommand(self).run(argv)
     elif cmd == "clone":
       CloneCommand(self).run(argv)
-    elif cmd == "add":
-      AddCommand(self).run(argv)
+    elif cmd == "follow":
+      FollowCommand(self).run(argv)
     elif cmd == "pull":
       PullCommand(self).run(argv)
     else:
