@@ -1,8 +1,6 @@
 package com.blackhttp;
 
 import com.black.Log;
-import com.blackhttp.blackgit.BlackGitDecoder;
-import com.blackhttp.blackgit.BlackGitHandler;
 import com.blackhttp.githttp.GitHttpHandler;
 import io.netty.buffer.ByteBuf;
 import io.netty.channel.ChannelHandlerContext;
@@ -18,16 +16,21 @@ import java.util.Set;
 
 /**
  * Decides from the first bytes of a connection whether the client is speaking
- * git's smart HTTP protocol, a TLS handshake (when --tls is enabled), or the
- * custom BlackGit wire protocol, then installs the matching pipeline and
- * removes itself. The buffered leading bytes are handed to the new pipeline by
+ * git's smart HTTP protocol or a TLS handshake (when --tls is enabled), then
+ * installs the matching HTTP pipeline and removes itself. Any other framing
+ * (including the legacy custom BlackGit wire protocol) is rejected by closing
+ * the connection — only standard HTTP(S) git access is supported. The legacy
+ * wire-protocol handlers ({@code BlackGitDecoder}/{@code BlackGitHandler}) are
+ * kept in the source tree but intentionally no longer routed to.
+ *
+ * <p>The buffered leading bytes are handed to the new pipeline by
  * ByteToMessageDecoder.handlerRemoved(), which fires the remaining cumulation
  * downstream exactly once when a decoder removes itself mid-decode.
  */
 final class ProtocolDetector extends ByteToMessageDecoder {
     private static final Set<String> HTTP_METHODS = Set.of(
             "GET", "POST", "HEAD", "PUT", "DELETE", "PATCH", "OPTIONS", "TRACE", "CONNECT");
-    private enum Route { HTTP, TLS_HTTP, BLACKGIT }
+    private enum Route { HTTP, TLS_HTTP, REJECT }
 
     private final Server server;
 
@@ -38,8 +41,8 @@ final class ProtocolDetector extends ByteToMessageDecoder {
     @Override
     protected void decode(ChannelHandlerContext ctx, ByteBuf in, List<Object> out) {
         // ByteToMessageDecoder buffers for us; with at least the 4 leading bytes
-        // (TLS record header, HTTP method token, or the frame length of the wire
-        // protocol) decide() can always produce a Route.
+        // (TLS record header or an HTTP method token) decide() can always
+        // produce a Route.
         if (in.readableBytes() < 4) {
             return;
         }
@@ -47,6 +50,17 @@ final class ProtocolDetector extends ByteToMessageDecoder {
         Route route = decide(in);
                 Log.net.debug("{} from {} -> {} pipeline",
                         ctx.channel().remoteAddress(), route, ctx.channel().localAddress());
+
+        if (route == Route.REJECT) {
+            // Non-HTTP traffic (e.g. a legacy BlackGit wire frame) is not
+            // supported: log and drop the connection rather than installing the
+            // old wire-protocol pipeline.
+            Log.net.warn("non-HTTP protocol from {} rejected (only HTTP(S) git is supported), closing",
+                    ctx.channel().remoteAddress());
+            ctx.close();
+            return;
+        }
+
                 install(ctx, route);
 
         // Removing ourselves mid-decode must not deliver the cumulation twice:
@@ -63,15 +77,15 @@ final class ProtocolDetector extends ByteToMessageDecoder {
                 && in.getUnsignedByte(base + 1) == 0x03) {
             return Route.TLS_HTTP;
         }
-        return isHttpMethodPrefix(in) ? Route.HTTP : Route.BLACKGIT;
+        return isHttpMethodPrefix(in) ? Route.HTTP : Route.REJECT;
         }
 
     /**
      * HTTP request lines always begin with a fixed method token. The first 4
      * bytes are therefore "GET ", "POST", "HEAD", "PUT ", or the first 4
-     * letters of a longer method. A BlackGit frame starts with a big-endian
-     * length which falls far below the byte values of these tokens, so the two
-     * protocols can never collide on the first 4 bytes.
+     * letters of a longer method. Anything else is treated as unsupported and
+     * rejected (the old wire protocol's length-prefixed frames fall into this
+     * bucket).
      */
     private static boolean isHttpMethodPrefix(ByteBuf in) {
         // Set.of("GET", "POST", "HEAD", "PUT", "DELETE", "PATCH", "OPTIONS", "TRACE", "CONNECT")
@@ -110,10 +124,9 @@ final class ProtocolDetector extends ByteToMessageDecoder {
                         new GitHttpHandler(server.repoResolver(), server.config()));
                 break;
             }
-            case BLACKGIT:
+            case REJECT:
             default: {
-                pipeline.addLast(new BlackGitDecoder());
-                pipeline.addLast(new BlackGitHandler());
+                // REJECT is handled in decode() before install() is reached.
                 break;
             }
         }
