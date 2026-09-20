@@ -112,7 +112,7 @@ Auth is left to git's standard HTTP layer (credential helper / keychain / `http.
 ### Client (git black) — pip
 
 ```bash
-pip install blackgitcli
+pip install blackgit
 ```
 
 Then:
@@ -129,7 +129,7 @@ git black update                   # commits only; trees/blobs on demand
 Pre-built images are on GitHub Container Registry:
 
 ```bash
-docker pull ghcr.io/<your-org>/blackgit:latest
+docker pull ghcr.io/zhuzhonghua/blackgit:latest
 ```
 
 Run with env vars (no config file needed):
@@ -140,7 +140,7 @@ docker run -d \
   -v /data/blackgit:/data \
   -e BLACKGIT_PORT=8081 \
   -e BLACKGIT_UPSTREAM=https://github.com/user/repo.git \
-  ghcr.io/<your-org>/blackgit:latest
+  ghcr.io/zhuzhonghua/blackgit:latest
 ```
 
 Environment variables:
@@ -198,14 +198,14 @@ GitHub Actions will:
 
 | Workflow | What it does | Artifact |
 |----------|--------------|----------|
-| `.github/workflows/docker.yml` | `lein uberjar` → `docker build` → push to `ghcr.io` | `ghcr.io/<org>/blackgit:latest` and `:v0.1.0` |
-| `.github/workflows/pypi.yml` | `python -m build` → `pypi-publish` | `blackgitcli 0.1.0` on PyPI |
+| `.github/workflows/docker.yml` | `lein uberjar` → `docker build` → push to `ghcr.io` | `ghcr.io/zhuzhonghua/blackgit:latest` and `:v0.0.1` |
+| `.github/workflows/pypi.yml` | `python -m build` → `pypi-publish` | `blackgit 0.0.1` on PyPI |
 
 After the workflows finish (check the **Actions** tab), users can:
 
 ```bash
-pip install blackgitcli            # client
-docker pull ghcr.io/<org>/blackgit # server
+pip install blackgit               # client
+docker pull ghcr.io/zhuzhonghua/blackgit  # server
 ```
 
 ### Local build test (before tagging)
@@ -220,7 +220,7 @@ docker build -t blackgit:local .
 # pip package (dry-run)
 pip install build
 python -m build
-pip install dist/blackgitcli-0.1.0-py3-none-any.whl --force-reinstall
+pip install dist/blackgit-0.0.1-py3-none-any.whl --force-reinstall
 git black --help
 ```
 
