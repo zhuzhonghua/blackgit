@@ -20,7 +20,7 @@ def perr(line):
 class CloneCommand:
   def __init__(self, blackw):
     self.blackw = blackw
-    self.usage = "usage: git blackw clone <url> [<dir>]"
+    self.usage = "usage: git black clone <url> [<dir>]"
 
   def run(self, argv):
     url, dest = self.parseargs(argv)
@@ -45,8 +45,8 @@ class CloneCommand:
   def parseargs(self, argv):
     import argparse
     p = argparse.ArgumentParser(
-        prog="git blackw clone",
-        usage="git blackw clone <url> [<dir>]")
+        prog="git black clone",
+        usage="git black clone <url> [<dir>]")
     p.add_argument("url")
     p.add_argument("dest", nargs="?")
     ns = p.parse_args(argv[2:])
@@ -130,7 +130,7 @@ class CloneCommand:
 class BranchCommand:
   def __init__(self, blackw):
     self.blackw = blackw
-    self.usage = "usage: git blackw branch"
+    self.usage = "usage: git black branch"
 
   def run(self, argv):
     if len(argv) > 2:
@@ -173,7 +173,7 @@ class BranchCommand:
 class LsCommand:
   def __init__(self, blackw):
     self.blackw = blackw
-    self.usage = "usage: git blackw ls [<ref> | <path> | <branch>:<path>]"
+    self.usage = "usage: git black ls [<ref> | <path> | <branch>:<path>]"
 
   def run(self, argv):
     extra = argv[2:]
@@ -289,10 +289,10 @@ class LsCommand:
 class FollowCommand:
   def __init__(self, blackw):
     self.blackw = blackw
-    self.usage = ("usage: git blackw follow <path> [<path>...]\n"
-                  "       git blackw follow -r|--recursive <dir> [<dir>...]\n"
-                  "       git blackw follow -d <path> [<path>...]\n"
-                  "       git blackw follow -l | --list")
+    self.usage = ("usage: git black follow <path> [<path>...]\n"
+                  "       git black follow -r|--recursive <dir> [<dir>...]\n"
+                  "       git black follow -d <path> [<path>...]\n"
+                  "       git black follow -l | --list")
 
   def run(self, argv):
     args = argv[2:]
@@ -333,7 +333,7 @@ class FollowCommand:
       entry = bw.ls_entry(toplevel, "HEAD", rel)
       if entry is None:
         raise Exception(f"no such path in HEAD: {rel}\n"
-                        f"run 'git blackw ls' to see the tree")
+                        f"run 'git black ls' to see the tree")
       mode, typ, sha = entry
       if typ == "blob":
       if rel not in kept:
@@ -382,14 +382,14 @@ class FollowCommand:
         expanded = {f for f in kept if f.startswith(prefix)}
         if not expanded:
           raise Exception(f"directory {rel} has no cared files\n"
-                          f"run 'git blackw follow -l' to list")
+                          f"run 'git black follow -l' to list")
         to_remove.update(expanded)
       else:
         to_remove.add(rel)
     missing = [r for r in to_remove if r not in kept]
     if missing:
       raise Exception(f"not in the cared set: {', '.join(sorted(missing))}\n"
-                      f"run 'git blackw follow -l' to list")
+                      f"run 'git black follow -l' to list")
     if not kept:
       raise Exception(f"nothing added yet\n{self.usage}")
     for r in to_remove:
@@ -426,7 +426,7 @@ class FollowCommand:
 class UpdateCommand:
   def __init__(self, blackw):
     self.blackw = blackw
-    self.usage = "usage: git blackw update"
+    self.usage = "usage: git black update"
 
   def run(self, argv):
     if len(argv) > 2:
@@ -489,9 +489,9 @@ class UpdateCommand:
 class LockCommand:
   def __init__(self, blackw):
     self.blackw = blackw
-    self.usage = ("usage: git blackw lock <path>\n"
-                  "       git blackw lock -d <path>\n"
-                  "       git blackw locks")
+    self.usage = ("usage: git black lock <path>\n"
+                  "       git black lock -d <path>\n"
+                  "       git black locks")
 
   def run(self, argv):
     args = argv[2:]

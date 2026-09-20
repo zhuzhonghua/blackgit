@@ -21,7 +21,7 @@ pulls any missing object from origin on demand at single-sha granularity,
 and refuses to hand out blobs that fall outside the caller's authorized paths.
 
 ```
-blackw (blackgitcli.py)                        blackgit server (Netty + JGit)
+git-black (blackgitcli.py)                        blackgit server (Netty + JGit)
   ordinary git + smart-http  ──────────────────▶  authenticates (Authorization: Basic)
   partial clone (blob:none)                        │
   sparse-checkout "cared files"                    ├─ read : shallow cache on disk
@@ -36,7 +36,7 @@ blackw (blackgitcli.py)                        blackgit server (Netty + JGit)
                                                                  client's token forwarded verbatim
 ```
 
-The client and server are decoupled: `blackw clone <url>` works against **any** git smart-HTTP remote (a bare GitLab, GitHub, or BlackGit itself).
+The client and server are decoupled: `git black clone <url>` works against **any** git smart-HTTP remote (a bare GitLab, GitHub, or BlackGit itself).
 Pointing the remote at BlackGit is what turns on caching and permissions.
 
 ### Data flow
@@ -86,21 +86,21 @@ With no `blackw-authz` file, every blob is downloadable (open mode).
 - **AuthZ (write)**: push requires a `w` grant somewhere in `blackw-authz`.
 Force-push and ref deletion are rejected by JGit. `--read-only` rejects all pushes server-wide.
 - The allowlist is computed over **reachable history** (not just the tip) and cached; it is invalidated after each push.
-- **File locks**: `blackw lock <file>` records who locked a file server-side. Subsequent pushes touching that file are rejected unless they come from the locker. `blackw lock -d <file>` unlocks. A second lock on an already-locked file returns the current locker.
+- **File locks**: `git black lock <file>` records who locked a file server-side. Subsequent pushes touching that file are rejected unless they come from the locker. `git black lock -d <file>` unlocks. A second lock on an already-locked file returns the current locker.
 
-### The client: `blackw`
+### The client: `git black`
 
 `blackgitcli.py` is a thin wrapper around stock git — it talks ordinary smart-HTTP and never requires the BlackGit server.
 
 | Command | What it does |
 |---------|--------------|
-| `blackw clone <url> [<dir>]` | `git init`, set `origin`, configure partial clone (`blob:none`), fetch `--depth=1`, point HEAD at the remote tip **without** materializing the worktree, arm an empty sparse-checkout (`!/* !/*/*`) |
-| `blackw follow <path>…` | Add a file/dir to your "cared" set; sparse-checkout materializes exactly those blobs (`-r` recursive, `-d` remove, `-l` list) |
-| `blackw update` | Fast-forward only: fetch commits with `--filter=tree:0`, move the branch, re-apply the cared view; diverged or dirty worktree falls back to standard `git pull` |
-| `blackw ls [<ref>|<path>|<branch>:<path>]` | List the tree without materializing blobs; server filters out paths the caller cannot download |
-| `blackw lock <file>` | Lock a file (only locker can push changes to it) |
-| `blackw lock -d <file>` | Unlock a file |
-| `blackw branch` | List local + remote branches with the current branch marked |
+| `git black clone <url> [<dir>]` | `git init`, set `origin`, configure partial clone (`blob:none`), fetch `--depth=1`, point HEAD at the remote tip **without** materializing the worktree, arm an empty sparse-checkout (`!/* !/*/*`) |
+| `git black follow <path>…` | Add a file/dir to your "cared" set; sparse-checkout materializes exactly those blobs (`-r` recursive, `-d` remove, `-l` list) |
+| `git black update` | Fast-forward only: fetch commits with `--filter=tree:0`, move the branch, re-apply the cared view; diverged or dirty worktree falls back to standard `git pull` |
+| `git black ls [<ref>|<path>|<branch>:<path>]` | List the tree without materializing blobs; server filters out paths the caller cannot download |
+| `git black lock <file>` | Lock a file (only locker can push changes to it) |
+| `git black lock -d <file>` | Unlock a file |
+| `git black branch` | List local + remote branches with the current branch marked |
 | anything else (`push`, `status`, `log`, …) | Passed straight through to stock git, arguments unchanged |
 
 Auth is left to git's standard HTTP layer (credential helper / keychain / `http.extraHeader`); blackw never parses user info out of the URL. Your cared-file set lives in `.git/blackw-add.tsv` and is purely a **client-side view** (what lands in your worktree). It is independent of the server-side blob allowlist, which is the actual security boundary.
@@ -109,7 +109,7 @@ Auth is left to git's standard HTTP layer (credential helper / keychain / `http.
 
 ## Install
 
-### Client (blackw) — pip
+### Client (git black) — pip
 
 ```bash
 pip install blackgitcli
@@ -118,10 +118,10 @@ pip install blackgitcli
 Then:
 
 ```bash
-blackw clone https://gitlab.example.com/group/repo.git
+git black clone https://gitlab.example.com/group/repo.git
 cd repo
-blackw follow src/engine        # start caring about a subtree
-blackw update                   # commits only; trees/blobs on demand
+git black follow src/engine        # start caring about a subtree
+git black update                   # commits only; trees/blobs on demand
 ```
 
 ### Server — Docker (recommended)
@@ -221,7 +221,7 @@ docker build -t blackgit:local .
 pip install build
 python -m build
 pip install dist/blackgitcli-0.1.0-py3-none-any.whl --force-reinstall
-blackw --help
+git black --help
 ```
 
 ---
@@ -234,6 +234,6 @@ blackw --help
 
 ### Status
 
-Implemented: clone/fetch with partial clone, on-demand single-sha backfill (cache stays shallow), path-based blob authorization via `blackw-authz`, push proxy with local-cache replay and self-healing, file locks, `blackw ls` with server-side permission filtering, auto-bootstrap from upstream URL (lazy fetch), Docker image, pip package, GitHub Actions CI/CD.
+Implemented: clone/fetch with partial clone, on-demand single-sha backfill (cache stays shallow), path-based blob authorization via `blackw-authz`, push proxy with local-cache replay and self-healing, file locks, `git black ls` with server-side permission filtering, auto-bootstrap from upstream URL (lazy fetch), Docker image, pip package, GitHub Actions CI/CD.
 
 Roadmap: multi-repo dashboard, GUI, SSH upstream (deferred — conflicts with identity forwarding).
