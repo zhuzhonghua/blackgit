@@ -1,0 +1,11 @@
+target/classes
+target/stale*
+target/*.json
+.git/
+.idea/
+.DS_Store
+__pycache__/
+*.pyc
+.clj-kondo/
+test/
+docs/
