@@ -745,6 +745,9 @@ class BlackGitCli:
       pout(out)
     return out
 
-if __name__ == '__main__':
+def main():
   blackw = BlackGitCli()
   blackw.run(sys.argv)
+
+if __name__ == '__main__':
+  main()
