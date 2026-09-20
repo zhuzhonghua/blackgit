@@ -40,6 +40,7 @@ class CloneCommand:
     self.setheadorigin(dest)
     self.checkout(dest, branch)
     self.sparsify(dest)
+    self.mark_server(dest)
     pout(f"clone done: {dest} on branch {branch}")
 
   def parseargs(self, argv):
@@ -78,6 +79,39 @@ class CloneCommand:
     run(['git', 'config', 'extensions.partialclone', 'origin'], cwd=dest)
     run(['git', 'config', 'remote.origin.partialclonefilter', 'blob:none'],
         cwd=dest)
+
+  def mark_server(self, dest):
+    """Probe GET {origin}/authz to tell a blackgit server from a third-party
+    git server (GitHub/GitLab/...), and record the result in blackgit.server.
+    A blackgit server answers /authz even without credentials with a
+    {"server":"blackgit","read":[...]} payload, so the probe is anonymous and
+    detection never depends on credentials. Anything else — 404/401/network
+    error/non-JSON — is a third-party server. `git black ls` probes /authz
+    only when blackgit.server=true; clones from third-party servers are
+    standalone and never touch the permission API."""
+    import urllib.parse, urllib.request, json
+    try:
+      url = self.blackw.git_output(
+          ["git", "remote", "get-url", "origin"], cwd=dest,
+          silent=True).strip()
+    except Exception:
+      url = ""
+    blackgit = False
+    parsed = urllib.parse.urlparse(url)
+    if parsed.scheme in ("http", "https"):
+      req = urllib.request.Request(url.rstrip("/") + "/authz")
+      try:
+        with urllib.request.urlopen(req, timeout=10) as resp:
+          data = json.loads(resp.read())
+        blackgit = (isinstance(data, dict)
+                    and isinstance(data.get("read"), list))
+      except Exception:
+        blackgit = False
+    self.blackw.run_cmd(
+        ["git", "config", "blackgit.server", "true" if blackgit else "false"],
+        cwd=dest)
+    pout(f"clone: origin is {'a blackgit server' if blackgit else 'a third-party git server'} "
+         f"-> blackgit.server={str(blackgit).lower()}")
 
   def fetch(self, dest):
     self.blackw.run_cmd(['git', 'fetch', '--depth=1', '--filter=blob:none',
@@ -222,18 +256,44 @@ class LsCommand:
       self._print_filtered(out, allowed, '')
 
   def _fetch_allowed(self, toplevel):
-    """GET /authz -> list of readable path prefixes, or None (= all)."""
-    import urllib.request, json, urllib.parse
+    """GET /authz -> list of readable path prefixes, or None (= no filter).
+
+    `git black clone` records blackgit.server=true when the origin is a
+    blackgit server, false for a third-party git server (GitHub/GitLab/...).
+    Only true enables the permission check here; false or absent means the
+    repo is standalone and /authz is never probed — no request, no warning,
+    no dependency on the server. With true, the /authz response itself is
+    the final discriminator: only the {"read": [...]} payload enables
+    filtering; anything else (404/401/network error/non-JSON) means no
+    filter, silently."""
+    try:
+      marker = self.blackw.git_output(
+          ["git", "config", "--local", "--get", "blackgit.server"],
+          cwd=toplevel, silent=True).strip()
+    except Exception:
+      return None
+    if marker != "true":
+      return None  # no blackgit marker -> standalone, no authz
+    import urllib.parse
+    try:
     url = self.blackw.git_output(
-        ["git", "remote", "get-url", "origin"], cwd=toplevel).strip()
-    api = url.rstrip("/") + "/authz"
+          ["git", "remote", "get-url", "origin"], cwd=toplevel,
+          silent=True).strip()
+    except Exception:
+      return None  # no origin -> standalone, nothing to filter against
+    if urllib.parse.urlparse(url).scheme not in ("http", "https"):
+      return None  # non-http origin -> not a git-over-HTTP server, no authz
+    import urllib.request, json
     parsed = urllib.parse.urlparse(url)
     netloc = parsed.netloc
     if "@" in netloc:
       netloc = netloc.split("@", 1)[1]
     inp = (f"protocol={parsed.scheme}\nhost={netloc}\n\n")
+    try:
     out = self.blackw.git_output(["git", "credential", "fill"],
-                                  cwd=toplevel, input=inp)
+                                    cwd=toplevel, input=inp, silent=True)
+    except Exception:
+      return None
     creds = {}
     for line in out.splitlines():
       if "=" in line:
@@ -242,17 +302,19 @@ class LsCommand:
     import base64
     raw = creds.get("username", "") + ":" + creds.get("password", "")
     auth = "Basic " + base64.b64encode(raw.encode()).decode()
+    api = url.rstrip("/") + "/authz"
     req = urllib.request.Request(api, headers={"Authorization": auth})
     try:
       with urllib.request.urlopen(req, timeout=10) as resp:
         data = json.loads(resp.read())
-      read = data.get("read", [])
+    except Exception:
+      return None  # not a blackgit server (or unreachable): no filter
+    read = data.get("read") if isinstance(data, dict) else None
+    if not isinstance(read, list):
+      return None  # not a blackgit authz payload: no filter
       if "**" in read:
         return None  # everything readable
       return read
-    except Exception as e:
-      pout(f"ls: cannot fetch authz ({e}); showing all (no filter)")
-      return None
 
   def _visible(self, path, allowed):
     """An entry is visible if it is itself under an allowed prefix, or its
@@ -725,6 +787,7 @@ class BlackGitCli:
   def git_output(self, cmd, *arg, **args):
     pout(f"{cmd}")
     inp = args.pop("input", None)
+    silent = args.pop("silent", False)
     stdin_arg = subprocess.PIPE if inp is not None else None
     with subprocess.Popen(cmd,
                           stdin=stdin_arg,
@@ -733,7 +796,7 @@ class BlackGitCli:
                           text=True,
                           *arg, **args) as p:
       out, err = p.communicate(input=inp)
-      if err:
+      if err and not silent:
         perr(err)
       if p.returncode != 0:
         raise Exception(err.strip() or f"cmd failed: {cmd}")

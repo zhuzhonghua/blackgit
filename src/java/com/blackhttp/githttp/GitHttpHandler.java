@@ -141,10 +141,14 @@ public final class GitHttpHandler extends ChannelInboundHandlerAdapter {
             return;
         }
 
-        // --- Authenticate: require Authorization: Basic, reject anonymous ---
+        // --- Authenticate: require Authorization: Basic, reject anonymous.
+        // The authz endpoint is the exception: it answers anonymous probes
+        // with a {"server":"blackgit",...} payload so a client can always
+        // tell a blackgit server from a third-party git server, even before
+        // any credentials exist. ---
         String authz = req.headers().get("Authorization");
         String user = parseBasicUser(authz);
-        if (user == null) {
+        if (user == null && !isAuthz) {
             writeResponse(ctx, GitResponse.unauthorized(
                     "authentication required: send "
                     + "'Authorization: Basic <base64(user:token)>'"));
@@ -220,13 +224,26 @@ public final class GitHttpHandler extends ChannelInboundHandlerAdapter {
         }
         // --- end lock API ---
 
-        // --- Authz API: GET <repo>/authz -> readable path prefixes ---
+        // --- Authz API: GET <repo>/authz -> readable path prefixes.
+        // Anonymous requests are answered too: the payload always carries
+        // "server":"blackgit" so clients can detect a blackgit server without
+        // credentials, and an anonymous read of ["**"] leaks no permission
+        // data (the server still enforces real access at blob-fetch time). ---
         if (isAuthz && isGet) {
             try {
                 Repository repo = com.black.GitRepo.open(dir);
-                List<String> paths = com.black.RepoAuthz.allowedReadPaths(repo, user);
+                List<String> paths;
+                String userOut;
+                if (user == null) {
+                    paths = null; // anonymous probe: identify, restrict nothing
+                    userOut = "";
+                } else {
+                    paths = com.black.RepoAuthz.allowedReadPaths(repo, user);
+                    userOut = user;
+                }
                 StringBuilder sb = new StringBuilder("{");
-                sb.append("\"user\":\"").append(user).append("\",");
+                sb.append("\"server\":\"blackgit\",");
+                sb.append("\"user\":\"").append(userOut).append("\",");
                 sb.append("\"read\":[");
                 if (paths != null) {
                     for (int i = 0; i < paths.size(); i++) {
@@ -234,7 +251,7 @@ public final class GitHttpHandler extends ChannelInboundHandlerAdapter {
                         sb.append("\"").append(paths.get(i)).append("\"");
                     }
                 } else {
-                    sb.append("\"**\""); // no authz file = everything readable
+                    sb.append("\"**\""); // no authz file / anonymous = everything readable
                 }
                 sb.append("]}");
                 writeResponse(ctx, GitResponse.raw(
