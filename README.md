@@ -1,151 +1,239 @@
 ## BlackGit
 
-[English](README.md) | [简体中文](README_ch.md)
-
-Inspired by **Perforce** and **Unreal Engine's Lore**, BlackGit bridges the gap between Git's distributed model and the centralized workflows teams need when dealing with large binaries, file locking, and fine-grained permissions — things Perforce is known for.
-
-The core idea: instead of forking Git or building a VCS from scratch, BlackGit is built on top of Git's **remote-helper** protocol with a custom backend server. You still use `git pull`, `git checkout` — but under the hood, a custom server controls what gets fetched, when, and by whom.
+BlackGit sits in front of a standard Git server (GitLab/GitHub) as a smart-HTTP cache and access-control layer. You keep using ordinary `git fetch` / `git push` / `git checkout`,
+while BlackGit controls what objects a client may download, keeps a shallow on-demand cache, and enforces per-path permissions on top of the upstream remote.
 
 ---
 
 ### How it works
 
-BlackGit uses a **partial clone** strategy(like scalar, but with `combine:blob:none+tree:0`): only minimal metadata is fetched initially, and objects (blobs, trees) are downloaded on-demand. This enables **large file on-demand download** natively — no Git LFS.
+BlackGit is composed by client and server sides;
 
-The system has three layers:
+BlackGit Server is a standard **git smart-HTTP** endpoint (Netty + JGit) that proxies a real upstream origin.
+Two pieces make it useful for large, permission-sensitive repos:
 
-**1. Git remote helper** (`git-blackw` / `git-remote-blackw`, Python) — Speaks Git's standard remote-helper protocol over stdin/stdout. Handles `fetch`, `list`, `other other commands`, and advertises capabilities like `filter` and `option`. Git discovers it automatically when it's on `PATH`.
-
-**2. IPC bridge** (`blackgit.py`, Python) — A relay process that translates between the remote helper's IPC calls and the server's TCP protocol. Communicates via Unix sockets on macOS/Linux and named pipes on Windows.
-
-**3. Backend server** (Java 21 + JGit) — A TCP server listening on port 1666 that manages refs, generates pack files via JGit's `PackWriter`, and serves objects from a standard `.git` repository.
+- **Partial clone + sparse, per-user views on the client** (`blackw`, Python) — wraps stock git:
+clone with `blob:none`, then materialize only the files the user explicitly `follow`s.
+No LFS, no full history of a multi-GB repo.
+- **A shallow cache with path-level blob authorization on the server** —
+the server serves a (possibly shallow) local copy of the upstream repo,
+pulls any missing object from origin on demand at single-sha granularity,
+and refuses to hand out blobs that fall outside the caller's authorized paths.
 
 ```
-User / Git Client
+blackw (blackgitcli.py)                        blackgit server (Netty + JGit)
+  ordinary git + smart-http  ──────────────────▶  authenticates (Authorization: Basic)
+  partial clone (blob:none)                        │
+  sparse-checkout "cared files"                    ├─ read : shallow cache on disk
+                                                   │         on-demand single-sha backfill from origin
+                                                   │         blob allowlist by path (SVN authz format)
+                                                   └─ write: canPush check + file-lock enforcement
+                                                             proxy receive-pack to origin
+                                                             replay the same body into the local cache
     │
     ▼
-git-blackw(git-remote-blackw)  ──(Unix Socket / Named Pipe)──▶  blackgit.py  ──(TCP :1666)──▶  Java Server
-                                                                                   │
-                                                                              JGit .git repo
+                                                                 origin (GitLab / GitHub)
+                                                                 client's token forwarded verbatim
 ```
 
-The wire protocol is straightforward: TCP messages are a 4-byte big-endian length prefix followed by a Protobuf body. IPC messages use a 2-byte opcode prefix plus Protobuf.
+The client and server are decoupled: `blackw clone <url>` works against **any** git smart-HTTP remote (a bare GitLab, GitHub, or BlackGit itself).
+Pointing the remote at BlackGit is what turns on caching and permissions.
 
-### Data Flow
+### Data flow
 
 ```mermaid
 sequenceDiagram
-    participant U as User
-    participant GH as git-blackw(git-remote-blackw)
-    participant BG as blackgit.py
-    participant SV as Java Server
-    participant GR as Server .git
+    participant C as blackw (client)
+    participant S as BlackGit server
+    participant O as origin (GitLab/GitHub)
 
-    U->>GH: git blackw init testgit
-    GH->>GH: git init & configure partial clone
-    GH->>GH: add remote origin blackw::testgit
-    GH->>BG: IPC: OP_LIST
-    BG->>SV: TCP: length(4B) + protobuf List
-    SV->>GR: git.branchList()
-    GR-->>SV: branches & SHAs
-    SV-->>BG: protobuf List
-    BG-->>GH: refs
-    GH->>BG: IPC: OP_FETCH
-    BG->>SV: TCP: length(4B) + protobuf Fetch
-    SV->>GR: walk commits (depth=100) + trees
-    GR-->>SV: objects
-    SV->>SV: PackWriter.prepackPack()
-    SV-->>BG: protobuf Fetch + pack bytes
-    BG-->>GH: pack data
-    GH->>GH: git index-pack --stdin --promisor
-    GH-->>U: repo ready
+    Note over C,S: clone / fetch
+    C->>S: GET /repo.git/info/refs?service=git-upload-pack
+    S-->>C: advertised refs (from shallow local cache)
+    C->>S: POST git-upload-pack (wants + filter blob:none)
+    S->>S: pre-parse wants; backfill any missing sha from origin
+    S-->>C: pack (only allowlisted blobs)
+
+    Note over C,S: lazy blob on demand
+    C->>S: POST git-upload-pack (wants <blob-sha>)
+    S->>O: fetch +<sha> via temp ref (keeps shallow boundary)
+    O-->>S: just the missing object graph
+    alt blob path not in allowlist
+        S--xC: error: blob not authorized
+    else
+        S-->>C: pack
+    end
+
+    Note over C,S: push
+    C->>S: POST git-receive-pack (with Authorization: Basic)
+    S->>S: canPush(user)? reject otherwise
+    S->>S: file-lock check: non-holder push on locked file → 403
+    S->>O: forward same body, token passed through
+    O-->>S: result
+    S->>S: replay body into local cache (no extra round-trip)
+    S-->>C: result
+```
+
+### Authentication & authorization
+
+- **AuthN**: every smart-HTTP request must carry `Authorization: Basic <user:token>`.
+The server decodes only the username for its own decisions;
+the raw header is forwarded to origin verbatim so upstream authenticates as the same user.
+- **AuthZ (read)**: each repo may carry a `blackw-authz` file in standard SVN `authz` format (groups, `@group`, `*`, `r`/`w`).
+The user's granted path prefixes become a blob allowlist: **commits and trees are always served** (history and directory navigation keep working),
+but a blob whose path is not covered by an `r` grant is refused on the wire.
+With no `blackw-authz` file, every blob is downloadable (open mode).
+- **AuthZ (write)**: push requires a `w` grant somewhere in `blackw-authz`.
+Force-push and ref deletion are rejected by JGit. `--read-only` rejects all pushes server-wide.
+- The allowlist is computed over **reachable history** (not just the tip) and cached; it is invalidated after each push.
+- **File locks**: `blackw lock <file>` records who locked a file server-side. Subsequent pushes touching that file are rejected unless they come from the locker. `blackw lock -d <file>` unlocks. A second lock on an already-locked file returns the current locker.
+
+### The client: `blackw`
+
+`blackgitcli.py` is a thin wrapper around stock git — it talks ordinary smart-HTTP and never requires the BlackGit server.
+
+| Command | What it does |
+|---------|--------------|
+| `blackw clone <url> [<dir>]` | `git init`, set `origin`, configure partial clone (`blob:none`), fetch `--depth=1`, point HEAD at the remote tip **without** materializing the worktree, arm an empty sparse-checkout (`!/* !/*/*`) |
+| `blackw follow <path>…` | Add a file/dir to your "cared" set; sparse-checkout materializes exactly those blobs (`-r` recursive, `-d` remove, `-l` list) |
+| `blackw update` | Fast-forward only: fetch commits with `--filter=tree:0`, move the branch, re-apply the cared view; diverged or dirty worktree falls back to standard `git pull` |
+| `blackw ls [<ref>|<path>|<branch>:<path>]` | List the tree without materializing blobs; server filters out paths the caller cannot download |
+| `blackw lock <file>` | Lock a file (only locker can push changes to it) |
+| `blackw lock -d <file>` | Unlock a file |
+| `blackw branch` | List local + remote branches with the current branch marked |
+| anything else (`push`, `status`, `log`, …) | Passed straight through to stock git, arguments unchanged |
+
+Auth is left to git's standard HTTP layer (credential helper / keychain / `http.extraHeader`); blackw never parses user info out of the URL. Your cared-file set lives in `.git/blackw-add.tsv` and is purely a **client-side view** (what lands in your worktree). It is independent of the server-side blob allowlist, which is the actual security boundary.
+
+---
+
+## Install
+
+### Client (blackw) — pip
+
+```bash
+pip install blackgitcli
+```
+
+Then:
+
+```bash
+blackw clone https://gitlab.example.com/group/repo.git
+cd repo
+blackw follow src/engine        # start caring about a subtree
+blackw update                   # commits only; trees/blobs on demand
+```
+
+### Server — Docker (recommended)
+
+Pre-built images are on GitHub Container Registry:
+
+```bash
+docker pull ghcr.io/<your-org>/blackgit:latest
+```
+
+Run with env vars (no config file needed):
+
+```bash
+docker run -d \
+  -p 8081:8081 \
+  -v /data/blackgit:/data \
+  -e BLACKGIT_PORT=8081 \
+  -e BLACKGIT_UPSTREAM=https://github.com/user/repo.git \
+  ghcr.io/<your-org>/blackgit:latest
+```
+
+Environment variables:
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `BLACKGIT_PORT` | `8081` | listen port |
+| `BLACKGIT_ROOT` | `/data` | repo cache root (mount a volume here) |
+| `BLACKGIT_UPSTREAM` | — | upstream URL, auto-bootstraps an empty bare repo on first start |
+| `BLACKGIT_READ_ONLY` | off | set to `1` to reject all pushes |
+| `BLACKGIT_TLS` | off | set to `1` to enable HTTPS |
+| `BLACKGIT_KEYSTORE` | — | path to keystore when TLS=1 |
+| `BLACKGIT_KEYSTORE_PASSWORD` | — | keystore password |
+| `BLACKGIT_KEY_PASSWORD` | — | key password |
+
+### Server — build from source
+
+```bash
+lein uberjar
+java -jar target/blackgit-*-standalone.jar \
+     --port 8081 --root /path/to/repos \
+     [--upstream https://github.com/user/repo.git] \
+     [--tls --keystore … --keystore-password …] [--read-only]
+```
+
+A URL like `http://host:8081/repo.git` resolves to `<root>/repo`. If `--upstream` is set, the server creates an empty bare repo on first start and lazily fetches refs from upstream on the first client request (same strategy as josh).
+
+---
+
+## Release
+
+### Prerequisites (one-time)
+
+1. **PyPI token** — create at https://pypi.org/manage/account/token/ (scope: "Entire account" or specific project).
+2. **GitHub Secrets** — add the token as a repo secret:
+   - Go to your repo → **Settings** → **Secrets and variables** → **Actions** → **New repository secret**
+   - Name: `PYPI_API_TOKEN`, Value: the PyPI token.
+3. **GitHub Container Registry** — no extra setup needed. The workflow uses the built-in `GITHUB_TOKEN`, which can push to `ghcr.io`. If the first push fails, enable packages in repo **Settings → Actions → General → Workflow permissions → Read and write permissions**.
+
+### Cut a release
+
+Everything is automated by GitHub Actions on tag push:
+
+```bash
+# 1. Make sure everything is committed and pushed to main
+git status
+git push origin main
+
+# 2. Tag and push — this triggers both workflows
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+GitHub Actions will:
+
+| Workflow | What it does | Artifact |
+|----------|--------------|----------|
+| `.github/workflows/docker.yml` | `lein uberjar` → `docker build` → push to `ghcr.io` | `ghcr.io/<org>/blackgit:latest` and `:v0.1.0` |
+| `.github/workflows/pypi.yml` | `python -m build` → `pypi-publish` | `blackgitcli 0.1.0` on PyPI |
+
+After the workflows finish (check the **Actions** tab), users can:
+
+```bash
+pip install blackgitcli            # client
+docker pull ghcr.io/<org>/blackgit # server
+```
+
+### Local build test (before tagging)
+
+```bash
+# server jar
+lein uberjar
+
+# Docker image
+docker build -t blackgit:local .
+
+# pip package (dry-run)
+pip install build
+python -m build
+pip install dist/blackgitcli-0.1.0-py3-none-any.whl --force-reinstall
+blackw --help
 ```
 
 ---
 
-### Protocol Overview
+### Tech stack
 
-#### Wire Format (TCP — Python ↔ Java Server)
+- **Server**: Java 21, JGit 6.10, Netty 4.1; built with Leiningen.
+- **Client**: Python 3; plain git subprocesses. Git 2.54+ required for partial clone.
+- **Transport**: git smart-HTTP over HTTP/1.1 (optionally TLS). Only standard HTTP(S) git is supported; non-HTTP connections are dropped on first bytes.
 
-```mermaid
-flowchart LR
-    subgraph TCP_Message[TCP Message]
-        L[4 bytes<br/>Body Length<br/>big-endian unsigned int] --> B[N bytes<br/>Protobuf Body]
-    end
-```
+### Status
 
-#### IPC Format (git-remote-blackw ↔ blackgit.py)
+Implemented: clone/fetch with partial clone, on-demand single-sha backfill (cache stays shallow), path-based blob authorization via `blackw-authz`, push proxy with local-cache replay and self-healing, file locks, `blackw ls` with server-side permission filtering, auto-bootstrap from upstream URL (lazy fetch), Docker image, pip package, GitHub Actions CI/CD.
 
-```mermaid
-flowchart LR
-    subgraph IPC_Message[IPC Message]
-        O[2 bytes<br/>Opcode<br/>big-endian unsigned short] --> PB[N bytes<br/>Protobuf Body]
-    end
-```
-
-### Git Remote Helper Commands
-
-`git-remote-blackw` speaks Git's standard remote-helper protocol over stdin/stdout:
-
-| Command | Description |
-|---------|-------------|
-| `capabilities` | Advertise: fetch, filter, push, list, option |
-| `list` | List refs for push or fetch |
-| `fetch <sha>` | Fetch objects for given SHA |
-| `option <key> <value>` | Set options (verbosity, filter, progress) |
-
----
-
-### Dual-mode: distributed when you want, centralized when you need
-
-Every BlackGit clone is a real Git repository. You can commit, branch, merge, and rebase offline — all standard Git workflows work unchanged. That's the distributed side.
-
-The centralized side is where the Perforce-like features come in:
-
-- **Native large file handling** — Objects are fetched lazily via partial clone. A 2 GB asset is just a blob that Git downloads when you check it out.
-- **File locking** (planned) — `git blackw lock <path>` prevents concurrent edits on binary or critical files, enforced server-side.
-- **Fine-grained permissions** (planned) — Read/write access at file and directory level, with ACLs managed by the server.
-- **Single source of truth** — The server controls what objects are available and who can access them. Clients only see what they're authorized to fetch.
-
-### An example workflow
-
-Add `git-blackw` to PATH
-
-```bash
-export PATH="/path/to/blackgit:$PATH"
-```
-
-Add to `~/.zshrc` (macOS) or `~/.bashrc` (Linux) to persist. Git automatically discovers `git-blackw` and `git-remote-blackw` when they are on `PATH`.
-
-```bash
-Launching Java Server and blackgit.py
-```
-
-```bash
-git blackw init testgit
-
-cd testgit
-git pull origin main
-
-```
-
-When you `git checkout` a file you haven't touched before, Git's partial clone machinery transparently fetches the required blob from the BlackGit server. From the user's perspective, it feels instant — there's no `lfs pull` or `lfs fetch` to remember.
-
-### Tech stack and platform support
-
-The remote helper and IPC bridge are Python 3.14+. The server is Java 21 with JGit, built using Leiningen (Clojure tooling for the build pipeline). Git 2.54.0 is required for partial clone support.
-
-The IPC layer auto-detects the platform — Unix sockets on macOS and Linux, named pipes on Windows — so the same codebase works across all three. The Java server is portable via the JVM with no platform-specific code.
-
-### What's next
-
-The current implementation covers fetch, and on-demand object retrieval. Push support is the immediate priority — implementing `OP_PUSH` on the server and pack negotiation in the remote helper.
-
-Beyond that, the roadmap includes: multi-threaded server (replacing the current single-threaded NIO loop), token-based authentication, file/directory locking with server-side enforcement, pre-commit and pre-receive hooks for lock and permission checks, and eventually a cross-platform GUI with an embedded IPC bridge.
-
-### (TODO)Extended CLI (`git blackw`)
-- [ ] `git blackw sync <path>` — force-sync specific files or directories from server
-- [ ] `git blackw lock <path>` — lock a file/directory
-- [ ] `git blackw unlock <path>` — unlock
-- [ ] `git blackw ls xxx` — do like ls xxx locally
-- [ ] `git blackw xxx` — other extended cli commands
+Roadmap: multi-repo dashboard, GUI, SSH upstream (deferred — conflicts with identity forwarding).
