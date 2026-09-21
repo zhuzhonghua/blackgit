@@ -428,16 +428,26 @@ class FollowCommand:
         kept.add(rel)
         added.append(rel)
       elif typ == "tree":
-        # A directory: expand to the blob files under it. Without --recursive
-        # only the top-level files of the directory are cared about; with
-        # --recursive every file under the whole subtree is.
-        blobs = bw.ls_tree_blobs(toplevel, "HEAD", rel, recursive)
-        if not blobs:
-          raise Exception(f"directory {rel} contains no files")
-        for b in blobs:
-          if b not in kept:
-            kept.add(b)
-            added.append(b)
+        if recursive:
+          # Recursive: include everything under the directory.
+          dir_rule = rel.rstrip("/") + "/"
+          if dir_rule not in kept:
+            kept.add(dir_rule)
+            added.append(dir_rule)
+        else:
+          # Non-recursive: include the directory but exclude its subdirs,
+          # so only top-level files under it are materialized.
+          dir_rule = rel.rstrip("/") + "/"
+          if dir_rule not in kept:
+            kept.add(dir_rule)
+            added.append(dir_rule)
+          # Find immediate subdirs of rel and add exclusion rules.
+          subdirs = bw.list_subdirs(toplevel, "HEAD", rel)
+          for sd in subdirs:
+            excl = "!" + rel.rstrip("/") + "/" + sd + "/"
+            if excl not in kept:
+              kept.add(excl)
+              added.append(excl)
       else:
         raise Exception(f"follow only supports files/directories, {rel} is a {typ}\n"
                         f"{self.usage}")
@@ -764,13 +774,72 @@ class BlackGitCli:
     the index stay real (commits/push/rebase all see the full tree); only the
     cared blobs are materialized in the worktree. Whitelist rules, so files
     added on the server later never leak into the view. paths empty -> exclude
-    everything."""
-    if not paths:
+    everything.
+    A path ending in '/' is a directory rule (matches everything under it);
+    otherwise it is an exact file match.
+    When a blackgit server with authz is present, the user's follow paths
+    are intersected with the server's readable prefixes: paths the user
+    followed but cannot read are dropped (the server would reject them
+    anyway), and readable paths the user did not follow are not materialized."""
+    read = self.authz_read_prefixes(top)
+    if read is None:
+      # No authz filter (standalone or open mode): use follow paths as-is.
+      effective = set(paths)
+    else:
+      # Intersect: keep follow paths that fall under some readable prefix.
+      effective = set()
+      for p in paths:
+        if p.startswith("!"):
+          continue  # exclusion rules from non-recursive follow
+        if any(p == r or p.startswith(r + "/") for r in read):
+          effective.add(p)
+    if not effective:
       rules = ["!/*", "!/*/*"]
     else:
-      rules = ["/" + p for p in sorted(paths)]
+      rules = [p if p.startswith("!") else "/" + p for p in sorted(effective)]
     self.run_cmd(["git", "sparse-checkout", "set", "--no-cone"] + rules,
                  cwd=top)
+
+  def authz_read_prefixes(self, top):
+    """Readable path prefixes from the blackgit server's /authz API.
+    Returns None when no authz filter (standalone or open mode);
+    otherwise returns a set of normalized path strings (no leading /, no trailing /)."""
+    try:
+      read = LsCommand(self).authz_rules(top)
+    except Exception:
+      return None
+    if not read or "**" in read:
+      return None
+    out = set()
+    for r in read:
+      r = r.strip("/")
+      if r:
+        out.add(r)
+    return out
+
+  def is_blackgit_server(self, top):
+    """True when origin is a blackgit server (has authz layer)."""
+    try:
+      out = self.git_output(
+          ["git", "config", "--local", "--get", "blackgit.server"],
+          cwd=top).strip().lower()
+      return out == "true"
+    except Exception:
+      return False
+
+  def list_subdirs(self, top, treeish, dir_rel):
+    """Immediate subdir names under dir_rel (no leading path, no trailing /)."""
+    cmd = ["git", "ls-tree", "-z", f"{treeish}:{dir_rel}"]
+    out = self.git_output(cmd, cwd=top)
+    subs = []
+    for raw in out.split("\0"):
+      if not raw:
+        continue
+      meta, _, name = raw.partition("\t")
+      parts = meta.split()
+      if len(parts) == 3 and parts[1] == "tree":
+        subs.append(name)
+    return subs
 
   def ls_tree_blobs(self, top, treeish, dir_rel, recursive):
     """All blob paths directly under dir_rel in treeish, repo-relative.
