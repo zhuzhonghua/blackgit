@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import sys
+import blackgitcli
 
 def perr(line):
   sys.stderr.write(line)
@@ -9,14 +10,6 @@ def perr(line):
 
 def main():
   try:
-    # Top-level dispatch. blackgitagent and blackgitcli are two independent
-    # modules and never import each other; only this entry knows both.
-    # - `git black` (no args) -> blackgitagent natural-language REPL
-    # - anything else          -> blackgitcli (unknown commands pass to git)
-    if len(sys.argv) < 2:
-      import blackgitagent
-      sys.exit(blackgitagent.main())
-    import blackgitcli
     blackw = blackgitcli.BlackGitCli()
     blackw.run(sys.argv)
     return 0

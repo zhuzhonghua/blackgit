@@ -28,7 +28,7 @@ commands:
 
 any other command is passed through to stock git (push, status, log, ...).
 
-run `git black` with no arguments to enter the AI Agent mode
+run `git black agent` to enter the AI Agent mode
 (natural-language git assistant)."""
 
 def pp(line, target):
@@ -695,6 +695,11 @@ class BlackGitCli:
     if cmd in ("-h", "--help", "help"):
       self.showhelp()
       return
+    if cmd == "agent":
+      # Enter the natural-language agent REPL. Imported lazily so ordinary
+      # commands never load the agent (or its openai dependency).
+      import blackgitagent
+      sys.exit(blackgitagent.main())
     if cmd == "ls":
       LsCommand(self).run(argv)
     elif cmd == "branch":

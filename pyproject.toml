@@ -9,10 +9,11 @@ description = "blackgit sparse/promisor git client for monorepos"
 readme = "README.md"
 requires-python = ">=3.9"
 license = { text = "EPL-2.0 OR GPL-2.0-or-later" }
+dependencies = ["openai"]
 
 [project.scripts]
 git-black = "blackgitcli:main"
 blackgit = "blackgitcli:main"
 
 [tool.setuptools]
-py-modules = ["blackgitcli"]
+py-modules = ["blackgitcli", "blackgitagent"]

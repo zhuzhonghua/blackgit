@@ -3,10 +3,11 @@
 """
 blackgitagent.py - natural-language assistant for blackgit (OpenAI-compatible).
 
-Entry: `git black` with no arguments enters this REPL (the git-black wrapper
-dispatches). The agent talks to an OpenAI-compatible chat/completions endpoint
-with tool calling, and drives blackgitcli (ls/branch/clone/follow/update/lock/
-locks) plus stock git, a cd tool, and safe python utility operations.
+Entry: `git black agent` enters this REPL (blackgitcli dispatches on the
+`agent` subcommand). The agent talks to an OpenAI-compatible chat/completions
+endpoint with tool calling, and drives blackgitcli (ls/branch/clone/follow/
+update/lock/locks) plus stock git, a cd tool, and safe python utility
+operations.
 
 Distribution: pip package; `openai` is a hard dependency (see pyproject.toml
 dependencies and requirements.txt), so no import-time fallback is needed.
