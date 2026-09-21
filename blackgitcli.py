@@ -428,26 +428,12 @@ class FollowCommand:
         kept.add(rel)
         added.append(rel)
       elif typ == "tree":
-        if recursive:
-          # Recursive: include everything under the directory.
+        # kept stores include paths only; exclusion rules are computed
+        # dynamically in set_sparse.
           dir_rule = rel.rstrip("/") + "/"
           if dir_rule not in kept:
             kept.add(dir_rule)
             added.append(dir_rule)
-        else:
-          # Non-recursive: include the directory but exclude its subdirs,
-          # so only top-level files under it are materialized.
-          dir_rule = rel.rstrip("/") + "/"
-          if dir_rule not in kept:
-            kept.add(dir_rule)
-            added.append(dir_rule)
-          # Find immediate subdirs of rel and add exclusion rules.
-          subdirs = bw.list_subdirs(toplevel, "HEAD", rel)
-          for sd in subdirs:
-            excl = "!" + rel.rstrip("/") + "/" + sd + "/"
-            if excl not in kept:
-              kept.add(excl)
-              added.append(excl)
       else:
         raise Exception(f"follow only supports files/directories, {rel} is a {typ}\n"
                         f"{self.usage}")
@@ -775,30 +761,39 @@ class BlackGitCli:
     cared blobs are materialized in the worktree. Whitelist rules, so files
     added on the server later never leak into the view. paths empty -> exclude
     everything.
-    A path ending in '/' is a directory rule (matches everything under it);
-    otherwise it is an exact file match.
-    When a blackgit server with authz is present, the user's follow paths
-    are intersected with the server's readable prefixes: paths the user
-    followed but cannot read are dropped (the server would reject them
-    anyway), and readable paths the user did not follow are not materialized."""
+    paths is a set of include paths (files or directories ending in '/').
+    Exclusion rules for non-recursive directories are computed dynamically."""
     read = self.authz_read_prefixes(top)
     if read is None:
-      # No authz filter (standalone or open mode): use follow paths as-is.
       effective = set(paths)
     else:
-      # Intersect: keep follow paths that fall under some readable prefix.
       effective = set()
       for p in paths:
-        if p.startswith("!"):
-          continue  # exclusion rules from non-recursive follow
         if any(p == r or p.startswith(r + "/") for r in read):
           effective.add(p)
-    if not effective:
+    # Compute exclusion rules: for each non-recursive directory in effective,
+    # list its immediate subdirs; exclude those not also in effective.
+    excludes = self.compute_excludes(top, effective)
+    all_rules = effective | excludes
+    if not all_rules:
       rules = ["!/*", "!/*/*"]
     else:
-      rules = [p if p.startswith("!") else "/" + p for p in sorted(effective)]
+      rules = [p if p.startswith("!") else "/" + p for p in sorted(all_rules)]
     self.run_cmd(["git", "sparse-checkout", "set", "--no-cone"] + rules,
                  cwd=top)
+
+  def compute_excludes(self, top, include_paths):
+    """For each non-recursive directory in include_paths, exclude its
+    immediate subdirs that are not themselves in include_paths."""
+    excludes = set()
+    dirs = [p for p in include_paths if p.endswith("/")]
+    for d in dirs:
+      subdirs = self.list_subdirs(top, "HEAD", d.rstrip("/"))
+      for sd in subdirs:
+        subpath = d + sd + "/"
+        if subpath not in include_paths:
+          excludes.add("!" + subpath)
+    return excludes
 
   def authz_read_prefixes(self, top):
     """Readable path prefixes from the blackgit server's /authz API.
