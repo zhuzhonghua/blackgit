@@ -5,6 +5,32 @@ import os
 # Cared-file set (one repo-relative blob path per line, sorted, unique).
 ADD_FILE = "blackw-add.tsv"
 
+HELP = """usage: git black <command> [<args>]
+
+blackgit is a sparse/promisor git client for monorepos: only the
+cared file set is materialized, everything else is fetched on demand.
+
+commands:
+  clone <url> [<dir>]      clone a repo (blob:none sparse checkout)
+  ls [<ref>|<path>|<branch>:<path>]
+                           list files/dirs in the tree
+  branch                   list branches
+  follow <path>...         add files/dirs to the cared set
+  follow -r|--recursive <dir>...
+                           add a whole subtree to the cared set
+  follow -d <path>...      remove files/dirs from the cared set
+  follow -l|--list         list cared files
+  update                   fast-forward update to origin (commits only)
+  lock <path>              lock a file
+  lock -d <path>           unlock a file
+  locks                    list locked files
+  help                     show this help
+
+any other command is passed through to stock git (push, status, log, ...).
+
+run `git black` with no arguments to enter the AI Agent mode
+(natural-language git assistant)."""
+
 def pp(line, target):
   target.write(line)
   if not line.endswith('\n'):
@@ -666,6 +692,9 @@ class BlackGitCli:
   def run(self, argv):
     pout(f"blackw run {argv}")
     cmd = argv[1] if len(argv) > 1 else ""
+    if cmd in ("-h", "--help", "help"):
+      self.showhelp()
+      return
     if cmd == "ls":
       LsCommand(self).run(argv)
     elif cmd == "branch":
@@ -687,6 +716,9 @@ class BlackGitCli:
       # interactive flows (password prompts, merge editor, ...) keep working
       # exactly as with git itself.
       os.execvp("git", ["git"] + argv[1:])
+
+  def showhelp(self):
+    pout(HELP)
 
   def _top(self):
     if self.toplevel is None:
