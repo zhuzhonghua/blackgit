@@ -529,7 +529,10 @@ class UpdateCommand:
     remote = bw.git_output(["git", "rev-parse", "--verify",
                             f"origin/{branch}"], cwd=top).strip()
     if local == remote:
-      pout(f"update: already up to date ({local[:8]})")
+      # Already up to date, but force-restore the worktree: any file covered
+      # by sparse-checkout rules that was manually deleted gets brought back.
+      bw.run_cmd(["git", "checkout", "-f", "HEAD", "--", "."], cwd=top)
+      pout(f"update: already up to date ({local[:8]}), worktree restored")
       return
     # 2. Only a fast-forward is handled here; a diverged history needs a real
     #    merge/rebase, which the standard git flow covers.
@@ -538,26 +541,25 @@ class UpdateCommand:
       raise Exception("update: local and remote have diverged — run standard "
                       "'git pull' (merge/rebase) instead")
     dirty = bw.git_output(["git", "status", "--porcelain"], cwd=top).strip()
-    if dirty:
+    # Filter out deleted files: update will restore them via sparse-checkout reapply.
+    real_changes = [l for l in dirty.splitlines() if not l.startswith(" D ")]
+    if real_changes:
       raise Exception(f"update: worktree has local changes, commit/stash them "
-                      f"first:\n{dirty}")
+                      f"first:\n" + "\n".join(real_changes))
     # 3. Move the branch, reset the index to the new tip, then re-apply the
     #    cared-file view. read-tree lazy-fetches the new tip's trees (servers
     #    always allow trees); sparse-checkout lazy-fetches the cared blobs
     #    (servers allow only allowlisted paths). Historical blobs/trees stay
     #    absent until explicitly needed.
     #
-    #    After read-tree the old worktree file looks like a local edit (old
-    #    content vs new index), which sparse-checkout protects and will not
-    #    overwrite — so force-materialize the cared files with checkout-index
-    #    (safe: we verified the worktree was clean before read-tree).
+    #    sparse-checkout reapply force-materializes every file covered by the
+    #    current rules, which restores files that were manually deleted (but
+    #    not staged for deletion).
     bw.run_cmd(["git", "update-ref", f"refs/heads/{branch}", remote], cwd=top)
     bw.run_cmd(["git", "read-tree", "HEAD"], cwd=top)
     paths = bw.read_add_set(top)
     bw.set_sparse(top, paths)
-    if paths:
-      bw.run_cmd(["git", "checkout-index", "-f", "--"] + sorted(paths),
-                 cwd=top)
+    bw.run_cmd(["git", "checkout", "-f", "HEAD", "--", "."], cwd=top)
     pout(f"update: {branch} {local[:8]} -> {remote[:8]} "
          f"(commits only; trees/blobs on demand)")
 
