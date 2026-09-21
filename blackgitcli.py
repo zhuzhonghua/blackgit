@@ -439,15 +439,15 @@ class FollowCommand:
             kept.add(b)
             added.append(b)
       else:
-        raise Exception(f"add only supports files/directories, {rel} is a {typ}\n"
+        raise Exception(f"follow only supports files/directories, {rel} is a {typ}\n"
                         f"{self.usage}")
     bw.set_sparse(toplevel, kept)
     bw.write_add_set(toplevel, kept)
     if added:
-      pout(f"add: +{', '.join(added)} (now caring about {len(kept)} file(s), "
+      pout(f"follow: +{', '.join(added)} (now caring about {len(kept)} file(s), "
            f"view applied)")
     else:
-      pout(f"add: already caring about all of: {', '.join(paths)}")
+      pout(f"follow: already caring about all of: {', '.join(paths)}")
 
   def deletepaths(self, paths):
     bw = self.blackw
@@ -690,7 +690,7 @@ class BlackGitCli:
     self.toplevel = None
 
   def run(self, argv):
-    pout(f"blackw run {argv}")
+    pout(f"black run {argv}")
     cmd = argv[1] if len(argv) > 1 else ""
     if cmd in ("-h", "--help", "help"):
       self.showhelp()
