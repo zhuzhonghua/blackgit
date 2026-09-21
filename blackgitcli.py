@@ -406,7 +406,9 @@ class FollowCommand:
         paths.append(a)
     if delete:
       if not paths:
-        raise Exception(f"{self.usage}")
+        # -d with no paths: clear the entire follow list.
+        self.deleteall()
+        return
       self.deletepaths(paths)
       return
     bw = self.blackw
@@ -445,6 +447,23 @@ class FollowCommand:
            f"view applied)")
     else:
       pout(f"follow: already caring about all of: {', '.join(paths)}")
+
+  def deleteall(self):
+    bw = self.blackw
+    toplevel = bw._top()
+    kept = bw.read_add_set(toplevel)
+    if not kept:
+      pout("follow: nothing to clear (already empty)")
+      return
+    dirty = bw.git_output(["git", "status", "--porcelain"],
+                          cwd=toplevel).strip()
+    if dirty:
+      raise Exception(f"follow -d: worktree has local changes, resolve them "
+                      f"first:\n{dirty}")
+    bw.set_sparse(toplevel, set())
+    bw.write_add_set(toplevel, set())
+    pout(f"follow: cleared {len(kept)} path(s), sparse-checkout "
+         f"'!/* !/*/*' re-armed, empty worktree")
 
   def deletepaths(self, paths):
     bw = self.blackw
