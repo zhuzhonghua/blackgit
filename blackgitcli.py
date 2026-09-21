@@ -269,8 +269,9 @@ class LsCommand:
       return
     except Exception:
       pass
-    rel = bw.normalizerel(arg)
-    if rel != ".":
+    # Paths are always relative to the repo root, not the cwd.
+    rel = arg.strip("/").strip(".")
+    if rel:
       otype = bw.git_output(['git', 'cat-file', '-t', f'HEAD:{rel}'],
                             cwd=toplevel).strip()
       if otype != "tree":
