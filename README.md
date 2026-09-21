@@ -30,8 +30,8 @@ git-black (blackgitcli.py)                        blackgit server (Netty + JGit)
                                                    └─ write: canPush check + file-lock enforcement
                                                              proxy receive-pack to origin
                                                              replay the same body into the local cache
-    │
-    ▼
+                                                                       │
+                                                                       ▼
                                                                  origin (GitLab / GitHub)
                                                                  client's token forwarded verbatim
 ```

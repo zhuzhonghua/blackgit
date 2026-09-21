@@ -265,20 +265,20 @@ public final class GitHttpHandler extends ChannelInboundHandlerAdapter {
         // --- end authz API ---
 
         if (isGet) {
-                bodyless = HttpMethod.HEAD.name().equals(method);
-                String service = queryParameter(req, "service");
-                boolean v2 = wantsV2(req);
-                boolean shallowHint = hasQueryParameter(req, "shallow");
-                Log.logger.debug("info/refs request service={} protocolV2={} shallowHint={}",
-                        service, v2, shallowHint);
-                writeResponse(ctx, new InfoRefsService(dir, config)
+            bodyless = HttpMethod.HEAD.name().equals(method);
+            String service = queryParameter(req, "service");
+            boolean v2 = wantsV2(req);
+            boolean shallowHint = hasQueryParameter(req, "shallow");
+            Log.logger.debug("info/refs request service={} protocolV2={} shallowHint={}",
+                    service, v2, shallowHint);
+            writeResponse(ctx, new InfoRefsService(dir, config)
                     .advertise(service, v2, shallowHint, user, authz));
             return;
         }
 
         // POST git-upload-pack / git-receive-pack: buffer the body, then dispatch.
-            inBody = new SpooledBuffer(config.spoolMemoryLimit);
-            pendingEndpoint = endpoint;
+        inBody = new SpooledBuffer(config.spoolMemoryLimit);
+        pendingEndpoint = endpoint;
     }
 
     private void onContent(ChannelHandlerContext ctx, HttpContent content) throws IOException {

@@ -147,7 +147,7 @@ class CloneCommand:
     run = self.blackw.run_cmd
     run(['git', 'read-tree', 'HEAD'], cwd=dest)
     run(['git', 'sparse-checkout', 'set', '--no-cone',
-                         '!/*', '!/*/*'], cwd=dest)
+         '!/*', '!/*/*'], cwd=dest)
     pout("clone: sparse checkout on (empty worktree, no blobs fetched)")
 
   def defaultbranch(self, dest):
@@ -303,7 +303,7 @@ class LsCommand:
       return None  # no blackgit marker -> standalone, no authz
     import urllib.parse
     try:
-    url = self.blackw.git_output(
+      url = self.blackw.git_output(
           ["git", "remote", "get-url", "origin"], cwd=toplevel,
           silent=True).strip()
     except Exception:
@@ -317,7 +317,7 @@ class LsCommand:
       netloc = netloc.split("@", 1)[1]
     inp = (f"protocol={parsed.scheme}\nhost={netloc}\n\n")
     try:
-    out = self.blackw.git_output(["git", "credential", "fill"],
+      out = self.blackw.git_output(["git", "credential", "fill"],
                                     cwd=toplevel, input=inp, silent=True)
     except Exception:
       return None
@@ -339,9 +339,9 @@ class LsCommand:
     read = data.get("read") if isinstance(data, dict) else None
     if not isinstance(read, list):
       return None  # not a blackgit authz payload: no filter
-      if "**" in read:
-        return None  # everything readable
-      return read
+    if "**" in read:
+      return None  # everything readable
+    return read
 
   def _visible(self, path, allowed):
     """An entry is visible if it is itself under an allowed prefix, or its
@@ -425,16 +425,16 @@ class FollowCommand:
                         f"run 'git black ls' to see the tree")
       mode, typ, sha = entry
       if typ == "blob":
-      if rel not in kept:
-        kept.add(rel)
-        added.append(rel)
+        if rel not in kept:
+          kept.add(rel)
+          added.append(rel)
       elif typ == "tree":
         # kept stores include paths only; exclusion rules are computed
         # dynamically in set_sparse.
-          dir_rule = rel.rstrip("/") + "/"
-          if dir_rule not in kept:
-            kept.add(dir_rule)
-            added.append(dir_rule)
+        dir_rule = rel.rstrip("/") + "/"
+        if dir_rule not in kept:
+          kept.add(dir_rule)
+          added.append(dir_rule)
       else:
         raise Exception(f"follow only supports files/directories, {rel} is a {typ}\n"
                         f"{self.usage}")
@@ -549,7 +549,7 @@ class UpdateCommand:
               "update: stash pop conflicts — resolve them manually, then run "
               "'git stash drop' when done")
       else:
-      bw.run_cmd(["git", "checkout", "-f", "HEAD", "--", "."], cwd=top)
+        bw.run_cmd(["git", "checkout", "-f", "HEAD", "--", "."], cwd=top)
       pout(f"update: already up to date ({local[:8]}), worktree restored")
       return
     # 2. Stash any uncommitted changes (deleted files are auto-restored anyway).
@@ -566,7 +566,7 @@ class UpdateCommand:
     mb = bw.git_output(["git", "merge-base", local, remote], cwd=top).strip()
     if mb == local:
       # Fast-forward: move the branch pointer directly.
-    bw.run_cmd(["git", "update-ref", f"refs/heads/{branch}", remote], cwd=top)
+      bw.run_cmd(["git", "update-ref", f"refs/heads/{branch}", remote], cwd=top)
       action = "fast-forward"
     else:
       # Diverged: try rebase. If it conflicts, bail out and let the user resolve.

@@ -54,12 +54,12 @@ public final class UploadPackService {
         Log.logger.info("upload-pack served for user={} repo={} v2={} wants={}",
                 user, gitDir, protocolV2, req.wants.size());
 
-            UploadPack up = new UploadPack(repo);
-            up.setBiDirectionalPipe(false);
-            up.setTimeout(0);
-            if (protocolV2) {
-                up.setExtraParameters(Collections.singleton("version=2"));
-            }
+        UploadPack up = new UploadPack(repo);
+        up.setBiDirectionalPipe(false);
+        up.setTimeout(0);
+        if (protocolV2) {
+            up.setExtraParameters(Collections.singleton("version=2"));
+        }
         BlobAllowlist allow = BlobAllowlist.get(repo, blobAllow);
         if (!allow.allowsAll()) {
             // Pre-validate the client's wants ourselves. A denied blob becomes a
@@ -74,12 +74,12 @@ public final class UploadPackService {
             }
             up.setRequestValidator((uploadPack, wants) -> checkBlobWants(repo, allow, wants));
         }
-            try {
+        try {
             up.upload(new ByteArrayInputStream(body), out, null);
-            } catch (PackProtocolException e) {
-                throw new GitProtocolException(e.getMessage(), e);
-            }
+        } catch (PackProtocolException e) {
+            throw new GitProtocolException(e.getMessage(), e);
         }
+    }
 
     /**
      * For every object the client asked for ({@code want <sha>}), fetch it from
@@ -197,13 +197,13 @@ public final class UploadPackService {
         // (bypassing this cache), sync local heads to origin while staying
         // shallow, so clients through the proxy see the latest tips.
         OriginBackfill.syncHeadsFromOrigin(repo, authz);
-            UploadPack up = new UploadPack(repo);
-            up.setBiDirectionalPipe(false);
-            if (protocolV2) {
-                up.setExtraParameters(Collections.singleton("version=2"));
-            }
-            PacketLineOut pckOut = new PacketLineOut(out);
-            RefAdvertiser adv = new RefAdvertiser.PacketLineOutRefAdvertiser(pckOut);
-            up.sendAdvertisedRefs(adv, "git-upload-pack");
+        UploadPack up = new UploadPack(repo);
+        up.setBiDirectionalPipe(false);
+        if (protocolV2) {
+            up.setExtraParameters(Collections.singleton("version=2"));
         }
+        PacketLineOut pckOut = new PacketLineOut(out);
+        RefAdvertiser adv = new RefAdvertiser.PacketLineOutRefAdvertiser(pckOut);
+        up.sendAdvertisedRefs(adv, "git-upload-pack");
     }
+}

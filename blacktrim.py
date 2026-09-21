@@ -341,22 +341,22 @@ def main(argv):
 
     p = normalize_path(a.path)
     cref = cache_ref(sha, p)
-  virtual = None
-  if not a.force:
+    virtual = None
+    if not a.force:
       q = gitq(top, "rev-parse", "--verify", "--quiet", cref)
       if q[0] == 0:
         virtual = q[1].strip()
 
-  if virtual is None:
+    if virtual is None:
       if not object_exists(top, sha):
         perr("real commit %s not present locally; run: git fetch origin %s" % (sha, sha))
-      return 1
+        return 1
       virtual = trim_local(top, sha, p)
-    print("trim %s:/%s -> %s" % (sha, a.path, virtual))
+      print("trim %s:/%s -> %s" % (sha, a.path, virtual))
       if p != ROOT:
         record_map(top, virtual, sha, p)
-    git(top, "update-ref", cref, virtual)
-    print("pinned %s -> %s" % (cref, virtual))
+      git(top, "update-ref", cref, virtual)
+      print("pinned %s -> %s" % (cref, virtual))
     else:
       print("cached %s = %s" % (cref, virtual))
       if p != ROOT:
@@ -364,9 +364,9 @@ def main(argv):
         if virtual not in mp:
           record_map(top, virtual, sha, p)
 
-  pin_head(top, virtual)
-  print("HEAD -> %s" % virtual)
-  return 0
+    pin_head(top, virtual)
+    print("HEAD -> %s" % virtual)
+    return 0
   except Exception as e:
     perr(str(e))
     return 1

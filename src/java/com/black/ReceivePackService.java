@@ -30,19 +30,19 @@ public final class ReceivePackService {
                                String user) throws Exception {
         Repository repo = GitRepo.open(gitDir); // shared, cached — do not close
         Log.logger.info("receive-pack push by user={} on {}", user, gitDir);
-            ReceivePack rp = new ReceivePack(repo);
+        ReceivePack rp = new ReceivePack(repo);
         rp.setAllowNonFastForwards(false); // reject --force / non-fast-forward pushes
         rp.setAllowDeletes(false);         // reject ref deletion
         rp.setAllowPushOptions(true);      // accept git push -o realcommit= / -o path=
-            rp.setBiDirectionalPipe(false);
-            rp.setTimeout(0);
-            try {
-                rp.receive(in, out, null);
+        rp.setBiDirectionalPipe(false);
+        rp.setTimeout(0);
+        try {
+            rp.receive(in, out, null);
             BlobAllowlist.invalidate(repo); // refs moved: drop stale blob allowlist cache
-            } catch (PackProtocolException e) {
-                throw new GitProtocolException(e.getMessage(), e);
-            }
+        } catch (PackProtocolException e) {
+            throw new GitProtocolException(e.getMessage(), e);
         }
+    }
 
     /**
      * Advertises receive-pack refs.
@@ -54,13 +54,13 @@ public final class ReceivePackService {
      */
     public static void advertiseReceivePack(File gitDir, OutputStream out) throws Exception {
         Repository repo = GitRepo.open(gitDir); // shared, cached — do not close
-            PacketLineOut pckOut = new PacketLineOut(out);
-            RefAdvertiser adv = new RefAdvertiser.PacketLineOutRefAdvertiser(pckOut);
-            pckOut.writeString("# service=git-receive-pack\n");
-            pckOut.end();
-            ReceivePack rp = new ReceivePack(repo);
+        PacketLineOut pckOut = new PacketLineOut(out);
+        RefAdvertiser adv = new RefAdvertiser.PacketLineOutRefAdvertiser(pckOut);
+        pckOut.writeString("# service=git-receive-pack\n");
+        pckOut.end();
+        ReceivePack rp = new ReceivePack(repo);
         rp.setAllowPushOptions(true); // advertise the push-options capability to clients
-            rp.setBiDirectionalPipe(false);
-            rp.sendAdvertisedRefs(adv);
-        }
+        rp.setBiDirectionalPipe(false);
+        rp.sendAdvertisedRefs(adv);
     }
+}

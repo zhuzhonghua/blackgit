@@ -48,8 +48,8 @@ final class ProtocolDetector extends ByteToMessageDecoder {
         }
 
         Route route = decide(in);
-                Log.net.debug("{} from {} -> {} pipeline",
-                        ctx.channel().remoteAddress(), route, ctx.channel().localAddress());
+        Log.net.debug("{} from {} -> {} pipeline",
+                ctx.channel().remoteAddress(), route, ctx.channel().localAddress());
 
         if (route == Route.REJECT) {
             // Non-HTTP traffic (e.g. a legacy BlackGit wire frame) is not
@@ -61,7 +61,7 @@ final class ProtocolDetector extends ByteToMessageDecoder {
             return;
         }
 
-                install(ctx, route);
+        install(ctx, route);
 
         // Removing ourselves mid-decode must not deliver the cumulation twice:
         // Netty defers handlerRemoved() until decode returns (decodeRemovalReentryProtection),
@@ -78,7 +78,7 @@ final class ProtocolDetector extends ByteToMessageDecoder {
             return Route.TLS_HTTP;
         }
         return isHttpMethodPrefix(in) ? Route.HTTP : Route.REJECT;
-        }
+    }
 
     /**
      * HTTP request lines always begin with a fixed method token. The first 4
