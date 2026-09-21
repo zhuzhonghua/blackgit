@@ -528,40 +528,77 @@ class UpdateCommand:
     local = bw.git_output(["git", "rev-parse", "HEAD"], cwd=top).strip()
     remote = bw.git_output(["git", "rev-parse", "--verify",
                             f"origin/{branch}"], cwd=top).strip()
+    # 2. Stash any uncommitted changes (deleted files are auto-restored anyway).
+    dirty = bw.git_output(["git", "status", "--porcelain"], cwd=top).strip()
+    stashed = False
+    if dirty:
+      try:
+        bw.run_cmd(["git", "stash", "push", "-m", "blackgit-update-auto"],
+                   cwd=top)
+        stashed = True
+      except Exception:
+        pass
     if local == remote:
-      # Already up to date, but force-restore the worktree: any file covered
-      # by sparse-checkout rules that was manually deleted gets brought back.
+      # Already up to date. Restore any deleted files, then put user changes back.
+      if stashed:
+        bw.run_cmd(["git", "checkout", "-f", "HEAD", "--", "."], cwd=top)
+        try:
+          bw.run_cmd(["git", "stash", "pop"], cwd=top)
+        except Exception:
+          raise Exception(
+              "update: stash pop conflicts — resolve them manually, then run "
+              "'git stash drop' when done")
+      else:
       bw.run_cmd(["git", "checkout", "-f", "HEAD", "--", "."], cwd=top)
       pout(f"update: already up to date ({local[:8]}), worktree restored")
       return
-    # 2. Only a fast-forward is handled here; a diverged history needs a real
-    #    merge/rebase, which the standard git flow covers.
-    mb = bw.git_output(["git", "merge-base", local, remote], cwd=top).strip()
-    if mb != local:
-      raise Exception("update: local and remote have diverged — run standard "
-                      "'git pull' (merge/rebase) instead")
+    # 2. Stash any uncommitted changes (deleted files are auto-restored anyway).
     dirty = bw.git_output(["git", "status", "--porcelain"], cwd=top).strip()
-    # Filter out deleted files: update will restore them via sparse-checkout reapply.
-    real_changes = [l for l in dirty.splitlines() if not l.startswith(" D ")]
-    if real_changes:
-      raise Exception(f"update: worktree has local changes, commit/stash them "
-                      f"first:\n" + "\n".join(real_changes))
-    # 3. Move the branch, reset the index to the new tip, then re-apply the
-    #    cared-file view. read-tree lazy-fetches the new tip's trees (servers
-    #    always allow trees); sparse-checkout lazy-fetches the cared blobs
-    #    (servers allow only allowlisted paths). Historical blobs/trees stay
-    #    absent until explicitly needed.
-    #
-    #    sparse-checkout reapply force-materializes every file covered by the
-    #    current rules, which restores files that were manually deleted (but
-    #    not staged for deletion).
+    stashed = False
+    if dirty:
+      try:
+        bw.run_cmd(["git", "stash", "push", "-m", "blackgit-update-auto"],
+                   cwd=top)
+        stashed = True
+      except Exception:
+        pass
+    # 3. Fast-forward or rebase.
+    mb = bw.git_output(["git", "merge-base", local, remote], cwd=top).strip()
+    if mb == local:
+      # Fast-forward: move the branch pointer directly.
     bw.run_cmd(["git", "update-ref", f"refs/heads/{branch}", remote], cwd=top)
+      action = "fast-forward"
+    else:
+      # Diverged: try rebase. If it conflicts, bail out and let the user resolve.
+      try:
+        bw.run_cmd(["git", "rebase", remote], cwd=top)
+        action = "rebase"
+      except Exception:
+        # Roll back: abort rebase and restore stashed changes so the user's
+        # work is never lost.
+        bw.run_cmd(["git", "rebase", "--abort"], cwd=top)
+        if stashed:
+          try:
+            bw.run_cmd(["git", "stash", "pop"], cwd=top)
+          except Exception:
+            pass
+        raise Exception(
+            "update: rebase conflicts — your local changes have been "
+            "restored. Resolve conflicts manually and re-run 'git black update'")
+    # Restore stashed changes if any.
+    if stashed:
+      try:
+        bw.run_cmd(["git", "stash", "pop"], cwd=top)
+      except Exception:
+        raise Exception(
+            "update: stash pop conflicts — resolve them manually, then run "
+            "'git stash drop' when done")
     bw.run_cmd(["git", "read-tree", "HEAD"], cwd=top)
     paths = bw.read_add_set(top)
     bw.set_sparse(top, paths)
     bw.run_cmd(["git", "checkout", "-f", "HEAD", "--", "."], cwd=top)
-    pout(f"update: {branch} {local[:8]} -> {remote[:8]} "
-         f"(commits only; trees/blobs on demand)")
+    pout(f"update: {branch} {local[:8]} -> {remote[:8]} ({action}; "
+         f"commits only; trees/blobs on demand)")
 
   def current_branch(self, bw, top):
     try:
