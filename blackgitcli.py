@@ -779,16 +779,19 @@ class BlackGitCli:
     cmd = ["git", "ls-tree", "-z"]
     if recursive:
         cmd.append("-r")
-    cmd += [treeish, "--", dir_rel]
+    # Use treeish:dir_rel colon syntax to list contents *inside* the dir,
+    # not the dir entry itself.
+    cmd += [f"{treeish}:{dir_rel}"]
     out = self.git_output(cmd, cwd=top)
     blobs = []
+    prefix = dir_rel.rstrip("/") + "/"
     for raw in out.split("\0"):
       if not raw:
         continue
       meta, _, name = raw.partition("\t")
       parts = meta.split()
       if len(parts) == 3 and parts[1] == "blob":
-        blobs.append(name)
+        blobs.append(prefix + name)
     return blobs
 
   def ls_entry(self, top, treeish, rel):
