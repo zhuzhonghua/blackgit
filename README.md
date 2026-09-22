@@ -1,15 +1,28 @@
 ## BlackGit
 
+Git is supposed to be bad at handling mono repos especially where there are many binary files like game projects repo,
+and also there are no permisson settings, but are important in game development.
+BlackGit is developped to handle these two problems.
+
+---
+
 BlackGit is composed by client and server sides(the client and server are decoupled),
 two pieces make it useful for large, permission-sensitive repos:
+
+---
+
+The cli client lets you download only cared files through sparse-checkout(initially not even the default root files).
+And the server serves a file level control layer as a proxy to upstreams(github/gitlab)
 
 
 - **Cli** **Partial clone + sparse, per-user views on the client** (`git black`, Python) — wraps stock git:
 Initially clone with `blob:none`, sparse-checkout set !/* !/*/* checkout nothing
 then materialize only the files the user explicitly `follow`s.
 No LFS, no full history of a multi-GB repo.
+
 - **Cli Agent**
 A mini agent to use natural languages to control blackgit and git
+
 - **Server** path-level blob authorization
 BlackGit Server sits in front of a standard Git server (GitLab/GitHub) as a smart-HTTP cache and access-control layer,
 refuses to hand out blobs that fall outside the caller's authorized paths.
