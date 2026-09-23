@@ -1,7 +1,11 @@
 ## BlackGit
 
+BlackGit serves an important feature of locking files in server.
+
+---
+
 Git is supposed to be bad at handling mono repos especially where there are many binary files like game projects repo,
-and also there are no permisson settings, but are important in game development.
+and also there are no permisson settings, and also no lock function, but are important in game development.
 BlackGit is developped to handle these two problems.
 
 ---
