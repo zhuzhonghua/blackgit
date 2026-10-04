@@ -1,5 +1,7 @@
 ## BlackGit
 
+[English](README.md) | [简体中文](README-zh.md)
+
 BlackGit serves an important feature of locking files in server.
 
 ---
