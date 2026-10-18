@@ -1,8 +1,47 @@
-## BlackGit
+# BlackGit
 
 [English](README.md) | [简体中文](README-zh.md)
 
-BlackGit serves an important feature of locking files in server.
+**Perforce's locks. Git's branches. One repository.**
+
+Take a binary file exclusively, exactly like `p4 edit`, and open as many local
+branches as you like — commits stay local, the lock lives on the server. The
+lock stops `push`; it never touches your branch or your local commits.
+
+![BlackGit: alice locks city.umap, bob still branches and commits, and only the push is refused — with the lock holder named](docs/hero.gif)
+
+Every number in that recording is a real run: a 1.4 GB server-side repository
+leaves 168 KB on your laptop after the clone, and 60 MB once you `follow` one
+file. The tape is [`docs/hero.tape`](docs/hero.tape); re-record it with
+[`docs/record.sh`](docs/record.sh).
+
+🎥 Want to pause it, or send it to someone (Slack, a forum, a blog):
+[docs/hero.mp4](docs/hero.mp4) — under 1 MB, H.264, pausable. The GIF is
+embedded above because GitHub only autoplays GIFs in a README.
+
+<details>
+<summary>Animation not moving? This picture says the same thing</summary>
+
+<img src="docs/quadrant.svg" width="640" alt="Four quadrants: wants file locks vs wants local branches — Perforce has only locks, Git only branches, BlackGit has both" />
+
+</details>
+
+### Try it in 60 seconds
+
+```bash
+pip install blackgit                                   # client
+docker run -d -p 8081:8081 -v /data/blackgit:/data \
+  -e BLACKGIT_UPSTREAM=https://github.com/you/game.git \
+  ghcr.io/zhuzhonghua/blackgit:latest                  # server
+
+git black clone http://localhost:8081/game.git         # 1.4 GB repo, 168 KB kept
+cd game
+git black follow assets/levels/city.umap               # take just this one file
+git black lock assets/levels/city.umap                  # take it exclusively
+```
+
+Anyone else asking for that file gets `already locked by <you>`, and their
+`git push` is refused by the server, which names the lock holder.
 
 ---
 
@@ -89,6 +128,8 @@ Force-push and ref deletion are rejected by JGit. `--read-only` rejects all push
 | anything else (`push`, `status`, `log`, …) | Passed straight through to stock git, arguments unchanged |
 
 Auth is left to git's standard HTTP layer (credential helper / keychain / `http.extraHeader`); black never parses user info out of the URL. Your cared-file set lives in `.git/blackw-add.tsv` and is purely a **client-side view** (what lands in your worktree). It is independent of the server-side blob allowlist, which is the actual security boundary.
+
+Set `BLACKGIT_QUIET=1` to hide the trace of the underlying git commands (the program's own output and git's output both stay). Useful in scripts, pipes and screen recordings.
 
 ---
 

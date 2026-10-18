@@ -61,6 +61,21 @@ public final class GitRepo {
         return created;
     }
 
+    /**
+     * Opens a private, uncached handle on the same repository.
+     *
+     * <p>The shared instance in {@link #CACHE} keeps JGit's snapshotting ref
+     * directory alive for the JVM lifetime. That snapshot does <em>not</em> see
+     * writes another handle makes after it was cached, so one-shot work that
+     * must observe and undo recent ref changes (the receive-pack lock
+     * dry-run) needs its own handle. Callers must close it.
+     */
+    public static Repository openUncached(File repoDir) throws IOException {
+        FileRepository repo = new FileRepository(resolveGitDir(repoDir));
+        configureUploadPack(repo);
+        return repo;
+    }
+
     /** Resolves the git dir (bare / worktree {@code .git} / linked {@code gitdir:} pointer). */
     private static File resolveGitDir(File repoDir) throws IOException {
         File gitDir = repoDir.getAbsoluteFile();

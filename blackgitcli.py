@@ -5,6 +5,13 @@ import os
 # Cared-file set (one repo-relative blob path per line, sorted, unique).
 ADD_FILE = "blackw-add.tsv"
 
+# By default every underlying git command is echoed, which is handy when
+# learning the tool but noisy for scripts, screen recordings and pipes
+# (`git black ls | ...`). BLACKGIT_QUIET=1 silences just that trace; the
+# program's own messages and all git output are unaffected.
+QUIET = os.environ.get("BLACKGIT_QUIET", "").strip().lower() not in (
+    "", "0", "false", "no")
+
 HELP = """usage: git black <command> [<args>]
 
 blackgit is a sparse/promisor git client for monorepos: only the
@@ -29,7 +36,10 @@ commands:
 any other command is passed through to stock git (push, status, log, ...).
 
 run `git black agent` to enter the AI Agent mode
-(natural-language git assistant)."""
+(natural-language git assistant).
+
+set BLACKGIT_QUIET=1 to hide the trace of the underlying git
+commands (everything else stays)."""
 
 def pp(line, target):
   target.write(line)
@@ -42,6 +52,11 @@ def pout(line):
 
 def perr(line):
   pp(line, sys.stderr)
+
+def trace(line):
+  """Echo an underlying git command, unless quiet mode is on."""
+  if not QUIET:
+    pout(line)
 
 class CloneCommand:
   def __init__(self, blackw):
@@ -745,7 +760,7 @@ class BlackGitCli:
     self.toplevel = None
 
   def run(self, argv):
-    pout(f"black run {argv}")
+    trace(f"black run {argv}")
     cmd = argv[1] if len(argv) > 1 else ""
     if cmd in ("-h", "--help", "help"):
       self.showhelp()
@@ -948,7 +963,7 @@ class BlackGitCli:
     return rel.replace(os.sep, "/")
 
   def git_output(self, cmd, *arg, **args):
-    pout(f"{cmd}")
+    trace(f"{cmd}")
     inp = args.pop("input", None)
     silent = args.pop("silent", False)
     stdin_arg = subprocess.PIPE if inp is not None else None

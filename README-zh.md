@@ -1,8 +1,44 @@
-## BlackGit
+# BlackGit
 
 [English](README.md) | [简体中文](README-zh.md)
 
-BlackGit 在服务器端提供了一个重要能力：文件锁定（file locking）。
+**P4 的锁，Git 的分支，在同一个仓库里。**
+
+像 `p4 edit` 一样独占一个二进制文件，同时想开多少本地分支就开多少 ——
+commit 在本地，锁在服务端。锁挡住的只有 `push`，你的分支和本地提交它一个字都不管。
+
+![BlackGit：alice 锁住 city.umap，bob 照样开分支提交，只有 push 被拒绝，并告诉他锁被谁持有](docs/hero.gif)
+
+上面这段录屏里每个数字都是真跑出来的：1.4 GB 的服务端仓库，clone 结束你机器上只有 168 KB，
+`follow` 一个文件才变成 60 MB。录屏脚本在 [`docs/hero.tape`](docs/hero.tape)，
+用 [`docs/record.sh`](docs/record.sh) 可以重录。
+
+📹 想暂停、或者发给别人（Slack、论坛、博客）：[docs/hero.mp4](docs/hero.mp4) ——
+不到 1 MB，H.264，可暂停。（GitHub README 只会自动播放 GIF，所以上面嵌的是 GIF。）
+
+<details>
+<summary>动画没动？同一件事，这张图说完了</summary>
+
+<img src="docs/quadrant.svg" width="640" alt="Four quadrants: wants file locks vs wants local branches — Perforce has only locks, Git only branches, BlackGit has both" />
+
+</details>
+
+### 60 秒自己跑一遍
+
+```bash
+pip install blackgit                                   # 客户端
+docker run -d -p 8081:8081 -v /data/blackgit:/data \
+  -e BLACKGIT_UPSTREAM=https://github.com/you/game.git \
+  ghcr.io/zhuzhonghua/blackgit:latest                  # 服务端
+
+git black clone http://localhost:8081/game.git         # 1.4 GB 仓库，只落 168 KB
+cd game
+git black follow assets/levels/city.umap               # 只要这一个文件
+git black lock assets/levels/city.umap                  # 像 p4 edit 一样独占它
+```
+
+别人再 `git black lock` 同一个文件会得到 `already locked by <你>`；
+他的 `git push` 会被服务端拒绝，并告诉他锁在谁手上。
 
 ---
 
@@ -87,6 +123,8 @@ git-black (blackgitcli.py)                        blackgit server (Netty + JGit)
 | 其他任何命令（`push`、`status`、`log`……） | 原样透传给原版 git，参数不变 |
 
 认证交给 git 的标准 HTTP 层处理（credential helper / keychain / `http.extraHeader`）；black 从不解析 URL 中的用户信息。你的关注文件集合存放在 `.git/blackw-add.tsv`，纯粹是**客户端视图**（决定工作树里落地哪些文件），与服务端 blob 白名单相互独立——后者才是真正的安全边界。
+
+设 `BLACKGIT_QUIET=1` 可以隐藏底层 git 命令的回显（程序自己的输出和 git 的输出都保留），脚本、管道和录屏时用得上。
 
 ---
 

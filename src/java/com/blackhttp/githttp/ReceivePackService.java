@@ -11,6 +11,8 @@ import com.blackhttp.Config;
 import com.blackhttp.SpooledBuffer;
 import io.netty.handler.codec.http.HttpResponseStatus;
 
+import org.eclipse.jgit.lib.BatchRefUpdate;
+import org.eclipse.jgit.lib.NullProgressMonitor;
 import org.eclipse.jgit.lib.ObjectId;
 import org.eclipse.jgit.lib.Repository;
 import org.eclipse.jgit.revwalk.RevCommit;
@@ -77,16 +79,24 @@ final class ReceivePackService {
         //    each ref update and rejects changes to files locked by others.
         //    The dry-run also writes the new objects into the local object db.
         try {
-            List<String> violations = checkLocks(gitDir, body, user);
-            if (!violations.isEmpty()) {
-                Log.logger.warn("push rejected by locks for user={}: {}", user, violations);
-                return GitResponse.error(HttpResponseStatus.FORBIDDEN,
-                        "file lock: " + String.join("; ", violations));
+            LockCheck lc = checkLocks(gitDir, body, user);
+            if (!lc.violations.isEmpty()) {
+                Log.logger.warn("push rejected by locks for user={}: {}", user, lc.violations);
+                // Answer with the dry-run's own receive-pack report instead of a
+                // bare HTTP error. A 403 body never reaches the user's terminal:
+                // git just reports "RPC failed" and the real reason is lost. With
+                // a well-formed report git prints the reason ("remote: file lock:
+                // ... (locked by alice)") plus the usual [remote rejected] line,
+                // the same way a pre-receive hook failure does on a normal server.
+                return GitResponse.raw(HttpResponseStatus.OK,
+                        "application/x-git-receive-pack-result", lc.report);
             }
         } catch (GitProtocolException e) {
-            Log.logger.warn("lock check protocol error (allowing push) {}: {}", gitDir, e.toString());
+            Log.logger.error("lock check could not run (push ALLOWED, locks NOT enforced) "
+                    + "{}: {}", gitDir, e.toString());
         } catch (Exception e) {
-            Log.logger.warn("lock check failed (allowing push) {}: {}", gitDir, e.toString());
+            Log.logger.error("lock check failed (push ALLOWED, locks NOT enforced) "
+                    + "{}: {}", gitDir, e.toString());
         }
 
         // 4. When the cache has a remote.origin.url, proxy the push to
@@ -165,22 +175,43 @@ final class ReceivePackService {
     }
 
     /**
+     * Outcome of the lock dry-run. When {@code violations} is non-empty,
+     * {@code report} holds the receive-pack result the dry-run produced for the
+     * refused push, framed the way git expects, so it can be returned verbatim.
+     */
+    private static final class LockCheck {
+        final List<String> violations;
+        final byte[] report;
+
+        LockCheck(List<String> violations, byte[] report) {
+            this.violations = violations;
+            this.report = report;
+        }
+    }
+
+    /**
      * Dry-run the push locally to check file locks. Receives the new objects,
      * runs a pre-receive hook that diffs each ref update against the lock
      * table, then rolls refs back to their old values (so the dry-run is
-     * invisible). Returns the list of lock violations (empty = OK).
+     * invisible). Returns the list of lock violations (empty = OK); when there
+     * are violations it also returns the report the client should see.
      */
     @SuppressWarnings("unchecked")
-    private static List<String> checkLocks(File gitDir, byte[] body, String pusher)
+    private static LockCheck checkLocks(File gitDir, byte[] body, String pusher)
             throws Exception {
         Repository repo = GitRepo.open(gitDir);
         FileLocks locks = new FileLocks(gitDir);
         java.util.List<String> violations = new java.util.ArrayList<>();
         java.util.List<ReceiveCommand> applied = new java.util.ArrayList<>();
+        String[] rejection = new String[1];
 
         ReceivePack rp = new ReceivePack(repo);
         rp.setBiDirectionalPipe(false);
         rp.setTimeout(0);
+        // Only an atomic receive-pack honours rejections set by the
+        // pre-receive hook; without it JGit applies the refs anyway and the
+        // lock check silently does nothing.
+        rp.setAtomic(true);
         rp.setPreReceiveHook((rpArg, cmds) -> {
             try (RevWalk rw = new RevWalk(repo)) {
                 for (ReceiveCommand cmd : cmds) {
@@ -193,36 +224,86 @@ final class ReceivePackService {
                     Set<String> changed = changedPaths(repo, rw, oldId, newId);
                     violations.addAll(locks.findViolations(changed, pusher));
                 }
+                if (!violations.isEmpty() && rejection[0] == null) {
+                    // Reject the whole batch the way a pre-receive hook does, and
+                    // put the reason into the report-status "ng <ref> <reason>"
+                    // line so git prints it inside the line users already know:
+                    //   ! [remote rejected] twilight -> twilight (file lock: x.umap (locked by alice))
+                    // JGit frames and band-multiplexes the report itself.
+                    rejection[0] = "file lock: " + String.join("; ", violations);
+                    for (ReceiveCommand c : cmds) {
+                        if (c.getResult() == ReceiveCommand.Result.NOT_ATTEMPTED) {
+                            c.setResult(ReceiveCommand.Result.REJECTED_OTHER_REASON,
+                                    rejection[0]);
+                        }
+                    }
+                }
             } catch (Exception e) {
                 throw new RuntimeException(e);
             }
         });
 
         SpooledBuffer out = new SpooledBuffer(1 << 20);
+        byte[] report;
         try {
             rp.receive(new ByteArrayInputStream(body), out, null);
+            report = violations.isEmpty() ? null : out.input().readAllBytes();
         } finally {
-            // Roll back any ref updates the dry-run performed.
-            for (ReceiveCommand cmd : applied) {
-                if (cmd.getNewId() != null && cmd.getResult() == ReceiveCommand.Result.OK) {
-                    try {
-                        if (cmd.getOldId().equals(ObjectId.zeroId())) {
-                            org.eclipse.jgit.lib.RefUpdate ru = repo.updateRef(cmd.getRefName());
-                            ru.delete();
-                        } else {
-                            org.eclipse.jgit.lib.RefUpdate ru = repo.updateRef(cmd.getRefName());
-                            ru.setNewObjectId(cmd.getOldId());
-                            ru.forceUpdate();
-                        }
-                    } catch (Exception e) {
-                        Log.logger.warn("rollback dry-run ref {} failed: {}",
-                                cmd.getRefName(), e.toString());
-                    }
-                }
-            }
+            rollbackDryRun(gitDir, applied);
             closeQuietly(out);
         }
-        return violations;
+        return new LockCheck(violations, report);
+    }
+
+    /**
+     * Undoes the ref updates a lock dry-run applied.
+     *
+     * <p>Two JGit details make this less obvious than it looks:
+     * <ul>
+     *   <li>the undo needs its own {@link Repository}: the shared instance in
+     *       {@link GitRepo} keeps a ref snapshot alive for the JVM lifetime and
+     *       never sees the refs the dry-run just wrote;</li>
+     *   <li>it has to go through a {@link BatchRefUpdate}. A single
+     *       {@code RefUpdate.delete()} answers {@code REJECTED} in this
+     *       configuration -- silently, without throwing -- so the rollback would
+     *       look like it worked while every refused push left its branch behind
+     *       on the server.</li>
+     * </ul>
+     */
+    private static void rollbackDryRun(File gitDir, List<ReceiveCommand> applied) {
+        List<ReceiveCommand> undo = new java.util.ArrayList<>();
+            for (ReceiveCommand cmd : applied) {
+                if (cmd.getNewId() != null && cmd.getResult() == ReceiveCommand.Result.OK) {
+                // old = what the dry-run wrote, new = what was there before.
+                // For a branch the push created, "new" is zero: that is a delete.
+                undo.add(new ReceiveCommand(cmd.getNewId(), cmd.getOldId(),
+                        cmd.getRefName()));
+                        }
+                    }
+        if (undo.isEmpty()) {
+            return;
+                }
+        try (Repository rollback = GitRepo.openUncached(gitDir)) {
+            BatchRefUpdate batch = rollback.getRefDatabase().newBatchUpdate();
+            // Putting the previous tip back is by definition a non-fast-forward
+            // update; without this JGit refuses the undo itself.
+            batch.setAllowNonFastForwards(true);
+            batch.setRefLogMessage("blackgit: rollback lock dry-run", false);
+            for (ReceiveCommand cmd : undo) {
+                batch.addCommand(cmd);
+            }
+            batch.execute(new RevWalk(rollback), NullProgressMonitor.INSTANCE);
+            for (ReceiveCommand cmd : undo) {
+                if (cmd.getResult() != ReceiveCommand.Result.OK) {
+                    Log.logger.warn("rollback of dry-run ref {} failed: {} (now {})",
+                            cmd.getRefName(), cmd.getResult(),
+                            rollback.exactRef(cmd.getRefName()));
+                }
+            }
+        } catch (Exception e) {
+            Log.logger.warn("cannot roll back the lock dry-run of {}: {}",
+                    gitDir, e.toString());
+        }
     }
 
     /** Computes repo-relative paths changed between old and new (tree diff). */
