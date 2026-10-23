@@ -1,12 +1,14 @@
 # BlackGit
 
-[English](README.md) | [简体中文](README-zh.md)
+[English](README.md) | [简体中文](README-zh.md) | [日本語](README-ja.md)
 
 **Perforce's locks. Git's branches. One repository.**
 
 Take a binary file exclusively, exactly like `p4 edit`, and open as many local
 branches as you like — commits stay local, the lock lives on the server. The
 lock stops `push`; it never touches your branch or your local commits.
+
+> **Status:** v0.0.2 · beta · MIT · requires Git 2.54+. CLI only (no artist GUI), no binary chunking/dedup yet.
 
 ![BlackGit: alice locks city.umap, bob still branches and commits, and only the push is refused — with the lock holder named](docs/hero.gif)
 
@@ -43,40 +45,41 @@ git black lock assets/levels/city.umap                  # take it exclusively
 Anyone else asking for that file gets `already locked by <you>`, and their
 `git push` is refused by the server, which names the lock holder.
 
+### How it compares
+
+| | Plain Git | Git LFS | Perforce | BlackGit |
+|---|---|---|---|---|
+| Local feature branches | ✅ | ✅ | ❌ | ✅ |
+| Exclusive file lock | ❌ | advisory (client-side) | ✅ | ✅ server-enforced, holder named |
+| Path-level read permissions | ❌ | ❌ | ✅ | ✅ (SVN authz format) |
+| Clone a 1.4 GB repo | full history | full + LFS scan | whole depot | **168 KB** |
+| Cost | — | hosting bandwidth quota | per-seat license | MIT, self-hosted |
+
+### Looking for pilot teams
+
+BlackGit is early. We're looking for **1–2 game / UE / VFX teams** willing to run it against a real repo and tell us where it breaks. Open an issue on this repo — no sales call, just a 60-minute technical trial.
+
 ---
 
-Git is supposed to be bad at handling mono repos especially where there are many binary files like game projects repo,
-and also there are no permisson settings, and also no lock function, but are important in game development.
-BlackGit is developped to handle these two problems.
+## Why
+
+Game repos are full of large binaries (`.umap`, `.uasset`, `.blend`, textures), and Git has no answer for the two things that hurt most: **exclusive editing** (two artists opening the same `.umap` means lost work) and **path-level access control** (artists shouldn't pull the whole repo's source).
+
+Perforce gives you locks but not Git's branching, and bills per seat. Git gives you branches but no locks. BlackGit sits between them — Perforce-style server locks on top of stock Git.
 
 ---
 
-BlackGit is composed by client and server sides(the client and server are decoupled),
-two pieces make it useful for large, permission-sensitive repos:
+It has two decoupled halves — a client that only touches the files you open, and a server that enforces locks and permissions:
 
----
+- **Client (`git black`, Python)** — a thin wrapper on stock Git. You clone with `blob:none` and an empty sparse-checkout (`!/* !/*/*`), then materialize only the files you explicitly `follow`. No LFS, no full history of a multi-GB repo. A mini agent also lets you drive it with natural language.
 
-The cli client lets you download only cared files through sparse-checkout(initially not even the default root files).
-And the server serves a file level control layer as a proxy to upstreams(github/gitlab)
-
-
-- **Cli** **Partial clone + sparse, per-user views on the client** (`git black`, Python) — wraps stock git:
-Initially clone with `blob:none`, sparse-checkout set !/* !/*/* checkout nothing
-then materialize only the files the user explicitly `follow`s.
-No LFS, no full history of a multi-GB repo.
-
-- **Cli Agent**
-A mini agent to use natural languages to control blackgit and git
-
-- **Server** path-level blob authorization
-BlackGit Server sits in front of a standard Git server (GitLab/GitHub) as a smart-HTTP cache and access-control layer,
-refuses to hand out blobs that fall outside the caller's authorized paths.
+- **Server (Docker)** — a smart-HTTP proxy in front of a standard Git host (GitHub/GitLab). It enforces file locks server-side and hands out only blobs inside your authorized paths (SVN `authz` format), while commits and trees stay navigable.
 
 ---
 
 ### How it works
 
-BlackGit Cli (Python) could be used spearately to handle Github/GitLab repositories.
+BlackGit Cli (Python) works standalone against any GitHub/GitLab repository — you don't need the server.
 
 BlackGit Server is a standard **git smart-HTTP** endpoint (Netty + JGit) that proxies a real upstream origin.
 

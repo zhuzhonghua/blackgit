@@ -1,11 +1,13 @@
 # BlackGit
 
-[English](README.md) | [简体中文](README-zh.md)
+[English](README.md) | [简体中文](README-zh.md) | [日本語](README-ja.md)
 
 **P4 的锁，Git 的分支，在同一个仓库里。**
 
 像 `p4 edit` 一样独占一个二进制文件，同时想开多少本地分支就开多少 ——
 commit 在本地，锁在服务端。锁挡住的只有 `push`，你的分支和本地提交它一个字都不管。
+
+> **状态：** v0.0.2 · beta · MIT · 需要 Git 2.54+。仅 CLI（无艺术家 GUI），暂不支持二进制分块/去重。
 
 ![BlackGit：alice 锁住 city.umap，bob 照样开分支提交，只有 push 被拒绝，并告诉他锁被谁持有](docs/hero.gif)
 
@@ -40,32 +42,35 @@ git black lock assets/levels/city.umap                  # 像 p4 edit 一样独�
 别人再 `git black lock` 同一个文件会得到 `already locked by <你>`；
 他的 `git push` 会被服务端拒绝，并告诉他锁在谁手上。
 
+### 对比一下
+
+| | 原生 Git | Git LFS | Perforce | BlackGit |
+|---|---|---|---|---|
+| 本地功能分支 | ✅ | ✅ | ❌ | ✅ |
+| 独占文件锁 | ❌ | 仅建议（客户端） | ✅ | ✅ 服务端强制，指明持有者 |
+| 路径级读权限 | ❌ | ❌ | ✅ | ✅（SVN authz 格式） |
+| clone 一个 1.4 GB 仓库 | 完整历史 | 完整 + LFS 扫描 | 整个 depot | **168 KB** |
+| 成本 | — | 托管带宽配额 | 按席位授权费 | MIT，自托管 |
+
+### 寻找试点团队
+
+BlackGit 还很早期。我们正在找 **1-2 个游戏 / UE / VFX 团队**，愿意拿真实仓库跑一遍，告诉我们哪里会崩。直接在本仓库开 issue——不是销售电话，只是一次 60 分钟的技术试用。
+
 ---
 
-Git 本身不擅长处理单体仓库（monorepo），尤其是包含大量二进制文件的仓库（如游戏项目仓库）：没有权限设置，也没有锁功能，而这些在游戏开发中都很重要。
-BlackGit 正是为解决这两个问题而开发的。
+## 为什么做这个
+
+游戏仓库塞满了大体积二进制文件（`.umap`、`.uasset`、`.blend`、贴图），而 Git 对最痛的两件事毫无办法：**独占编辑**（两个美术同时打开同一个 `.umap` 就会丢工作）和**路径级访问控制**（美术不该把整个仓库的源码都拉下来）。
+
+Perforce 给你锁，但不给 Git 那样的分支，还要按席位收费。Git 给你分支，但没有锁。BlackGit 卡在中间——在原生 Git 之上加 Perforce 式的服务端锁。
 
 ---
 
-BlackGit 由客户端和服务端两部分组成（两者解耦），
-这套组合让大型、对权限敏感的仓库变得可用：
+它由两个解耦的部分组成——客户端只落地你打开的文件，服务端负责强制锁和权限：
 
----
+- **客户端（`git black`，Python）**——原生 git 的薄封装。以 `blob:none` 和空 sparse-checkout（`!/* !/*/*`）克隆，之后只 materialize（落地）你显式 `follow` 的文件。不需要 LFS，也不需要多 GB 仓库的完整历史。还有一个迷你 agent，可以用自然语言驱动它。
 
-CLI 客户端通过 sparse-checkout 只下载你关心的文件（初始时甚至连默认根文件都不下载）。
-服务端则作为上游（GitHub/GitLab）前置的文件级控制层代理。
-
-- **Cli（客户端）** **部分克隆 + 稀疏检出，客户端按用户视图**（`git black`，Python）——包装原版 git：
-  初始以 `blob:none` 克隆，sparse-checkout 设为 `!/* !/*/*`，什么都不检出，
-  之后只 materialize（落地）用户显式 `follow` 的文件。
-  不需要 LFS，也不需要多 GB 仓库的完整历史。
-
-- **Cli Agent**
-  一个迷你 agent，用自然语言控制 blackgit 和 git。
-
-- **Server（服务端）** 路径级 blob 授权
-  BlackGit Server 位于标准 Git 服务器（GitLab/GitHub）之前，作为 smart-HTTP 缓存和访问控制层，
-  拒绝提供调用者授权路径之外的任何 blob。
+- **服务端（Docker）**——前置在标准 Git 托管（GitHub/GitLab）之前的 smart-HTTP 代理。在服务端强制文件锁，并只下发你授权路径内的 blob（SVN `authz` 格式），同时 commit 和 tree 仍然可导航。
 
 ---
 

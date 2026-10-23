@@ -272,17 +272,17 @@ final class ReceivePackService {
      */
     private static void rollbackDryRun(File gitDir, List<ReceiveCommand> applied) {
         List<ReceiveCommand> undo = new java.util.ArrayList<>();
-            for (ReceiveCommand cmd : applied) {
-                if (cmd.getNewId() != null && cmd.getResult() == ReceiveCommand.Result.OK) {
+        for (ReceiveCommand cmd : applied) {
+            if (cmd.getNewId() != null && cmd.getResult() == ReceiveCommand.Result.OK) {
                 // old = what the dry-run wrote, new = what was there before.
                 // For a branch the push created, "new" is zero: that is a delete.
                 undo.add(new ReceiveCommand(cmd.getNewId(), cmd.getOldId(),
                         cmd.getRefName()));
-                        }
-                    }
+            }
+        }
         if (undo.isEmpty()) {
             return;
-                }
+        }
         try (Repository rollback = GitRepo.openUncached(gitDir)) {
             BatchRefUpdate batch = rollback.getRefDatabase().newBatchUpdate();
             // Putting the previous tip back is by definition a non-fast-forward
